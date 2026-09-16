@@ -1,0 +1,1 @@
+ALTER TABLE "derived_assets" ADD CONSTRAINT "derived_assets_source_derived_asset_id_derived_assets_id_fk" FOREIGN KEY ("source_derived_asset_id") REFERENCES "public"."derived_assets"("id") ON DELETE set null ON UPDATE no action;

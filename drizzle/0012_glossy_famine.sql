@@ -1,0 +1,3 @@
+ALTER TABLE "generation_jobs" ADD COLUMN "regenerate_of_job_id" uuid;--> statement-breakpoint
+ALTER TABLE "generation_jobs" ADD CONSTRAINT "generation_jobs_regenerate_of_job_id_generation_jobs_id_fk" FOREIGN KEY ("regenerate_of_job_id") REFERENCES "public"."generation_jobs"("id") ON DELETE set null ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "generation_jobs_regenerate_idx" ON "generation_jobs" USING btree ("regenerate_of_job_id");

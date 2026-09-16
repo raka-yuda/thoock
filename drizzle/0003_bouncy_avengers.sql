@@ -1,0 +1,1 @@
+ALTER TABLE "generation_jobs" ALTER COLUMN "model" SET DATA TYPE varchar(160);
