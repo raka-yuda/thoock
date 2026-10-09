@@ -81,6 +81,36 @@ describe("GenerationWorkspace recovery", () => {
     );
   });
 
+  it("prefers an enabled live model when mock mode is disabled", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ data: [] }))),
+    );
+    const liveCapability = {
+      ...defaultModelCatalog[0],
+      id: "snapgen-live-default",
+      providerId: "snapgen",
+      providerModelId: "live-default",
+      displayName: "Live default model",
+    };
+
+    render(
+      <GenerationWorkspace
+        catalog={[...defaultModelCatalog, liveCapability]}
+        mockMode={false}
+        localUpscaleConfigured={false}
+        briefDraft={{
+          briefId: failedJob.briefId,
+          briefName: failedJob.briefName,
+          prompt: failedJob.prompt,
+        }}
+      />,
+    );
+
+    expect(screen.getAllByText("Live default model").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Mock economical placeholder")).not.toBeInTheDocument();
+  });
+
   it("requires a user trigger and links a retry to the failed attempt", async () => {
     let retryBody: Record<string, unknown> | null = null;
     vi.stubGlobal(
@@ -113,7 +143,15 @@ describe("GenerationWorkspace recovery", () => {
     );
 
     expect(await screen.findByText("Failed stock concept")).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+    fireEvent.pointerDown(
+      screen.getByRole("button", {
+        name: "Actions for Failed stock concept, attempt 1",
+      }),
+      { button: 0, ctrlKey: false },
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: /retry generation/i }),
+    );
     expect(screen.getByRole("alertdialog")).toHaveTextContent(
       "This creates a new linked attempt",
     );
@@ -197,8 +235,14 @@ describe("GenerationWorkspace recovery", () => {
     expect(await screen.findByText("Failed stock concept")).toBeVisible();
     expect(screen.queryByText(/DOCTYPE/i)).not.toBeInTheDocument();
     expect(screen.getByText(/provider gateway returned an HTML error page/i)).toBeVisible();
+    fireEvent.pointerDown(
+      screen.getByRole("button", {
+        name: "Actions for Failed stock concept, attempt 1",
+      }),
+      { button: 0, ctrlKey: false },
+    );
     fireEvent.click(
-      screen.getByRole("button", { name: /check provider result/i }),
+      await screen.findByRole("menuitem", { name: /check provider result/i }),
     );
     fireEvent.change(screen.getByLabelText(/snapgen history uuid/i), {
       target: { value: "snap-history-from-dashboard" },
@@ -250,8 +294,14 @@ describe("GenerationWorkspace recovery", () => {
     );
 
     expect(await screen.findByText("Failed stock concept")).toBeVisible();
+    fireEvent.pointerDown(
+      screen.getByRole("button", {
+        name: "Actions for Failed stock concept, attempt 1",
+      }),
+      { button: 0, ctrlKey: false },
+    );
     fireEvent.click(
-      screen.getByRole("button", { name: /check provider result/i }),
+      await screen.findByRole("menuitem", { name: /check provider result/i }),
     );
     fireEvent.click(screen.getByRole("button", { name: /find result now/i }));
 

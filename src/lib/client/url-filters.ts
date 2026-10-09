@@ -6,6 +6,17 @@ export function readUrlFilter(key: string, fallback = "") {
 }
 
 export function pushUrlFilters(values: Record<string, UrlFilterValue>) {
+  writeUrlFilters("push", values);
+}
+
+export function replaceUrlFilters(values: Record<string, UrlFilterValue>) {
+  writeUrlFilters("replace", values);
+}
+
+function writeUrlFilters(
+  mode: "push" | "replace",
+  values: Record<string, UrlFilterValue>,
+) {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
   for (const [key, value] of Object.entries(values)) {
@@ -14,7 +25,7 @@ export function pushUrlFilters(values: Record<string, UrlFilterValue>) {
     else url.searchParams.set(key, String(value));
   }
   const next = `${url.pathname}${url.search}${url.hash}`;
-  window.history.pushState(null, "", next);
+  window.history[`${mode}State`](null, "", next);
   window.dispatchEvent(new Event("thoock:urlchange"));
 }
 

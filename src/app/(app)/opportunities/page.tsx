@@ -1,4 +1,9 @@
 import { OpportunityWorkspace } from "@/components/opportunity-workspace";
+import { resolveRuntimeConfig } from "@/lib/runtime-config";
+
 export default function OpportunitiesPage() {
-  return <OpportunityWorkspace />;
+  const { defaultResearchProvider } = resolveRuntimeConfig();
+  return (
+    <OpportunityWorkspace defaultResearchProvider={defaultResearchProvider} />
+  );
 }

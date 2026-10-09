@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ExportWorkspace } from "./export-workspace";
+import { Toaster } from "./ui/toaster";
 
 function makeAsset(index: number) {
   return {
@@ -66,7 +67,12 @@ describe("ExportWorkspace", () => {
   });
 
   it("accumulates page selections instead of replacing earlier pages", async () => {
-    render(<ExportWorkspace />);
+    render(
+      <>
+        <ExportWorkspace />
+        <Toaster />
+      </>,
+    );
 
     const firstPageSelectAll = await screen.findByRole("checkbox", {
       name: "Select all images on this page",
@@ -98,7 +104,12 @@ describe("ExportWorkspace", () => {
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => undefined);
 
-    render(<ExportWorkspace />);
+    render(
+      <>
+        <ExportWorkspace />
+        <Toaster />
+      </>,
+    );
     fireEvent.click(
       await screen.findByRole("button", {
         name: "Download Brief 20 JPEG",
@@ -114,5 +125,6 @@ describe("ExportWorkspace", () => {
     expect(createObjectUrl).toHaveBeenCalled();
     expect(anchorClick).toHaveBeenCalled();
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:prepared-image");
+    expect(await screen.findByText("JPEG downloaded")).toBeVisible();
   });
 });

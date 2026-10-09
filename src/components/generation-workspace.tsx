@@ -11,6 +11,7 @@ import {
   CircleDollarSign,
   History,
   Info,
+  MoreVertical,
   Play,
   RefreshCw,
   RotateCcw,
@@ -104,11 +105,19 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "./ui/tooltip";
+import { toast, ToastFeedback } from "./ui/toaster";
 
 type Strategy = "economical" | "direct_4mp" | "custom";
 type GenerationJob = {
@@ -154,6 +163,7 @@ type Props = {
   catalog: ModelCapability[];
   localUpscaleConfigured: boolean;
   briefDraft: GenerationDraft | null;
+  mockMode?: boolean;
 };
 export type GenerationDraft = {
   briefId?: string;
@@ -205,16 +215,25 @@ export function GenerationWorkspace({
   catalog,
   localUpscaleConfigured,
   briefDraft,
+  mockMode = true,
 }: Props) {
   const enabled = catalog.filter((item) => item.enabled);
+  const liveEnabled = enabled.filter(
+    (item) => !["mock", "imported"].includes(item.providerId),
+  );
+  const preferredEnabled = !mockMode && liveEnabled.length ? liveEnabled : enabled;
   const providers = [...new Set(catalog.map((item) => item.providerId))];
   const initialEconomical =
-    enabled.find((item) => item.id === "mock-economical") ??
-    enabled[0] ??
+    (mockMode
+      ? preferredEnabled.find((item) => item.id === "mock-economical")
+      : undefined) ??
+    preferredEnabled[0] ??
     catalog[0];
   const initialDirect =
-    enabled.find((item) => item.id === "mock-direct") ??
-    enabled.find((item) =>
+    (mockMode
+      ? preferredEnabled.find((item) => item.id === "mock-direct")
+      : undefined) ??
+    preferredEnabled.find((item) =>
       item.supportedResolutions.some((resolution) =>
         Object.values(resolution.expectedDimensions).some(
           (size) => calculateMegapixels(size.width, size.height) >= 4,
@@ -297,6 +316,8 @@ export function GenerationWorkspace({
   const [historyError, setHistoryError] = useState("");
   const [historyNotice, setHistoryNotice] = useState("");
   const [retryingJobId, setRetryingJobId] = useState<string | null>(null);
+  const [retryConfirmJob, setRetryConfirmJob] =
+    useState<GenerationJob | null>(null);
   const [checkingJob, setCheckingJob] = useState<GenerationJob | null>(null);
   const [historyUuid, setHistoryUuid] = useState("");
   const [checkingProvider, setCheckingProvider] = useState(false);
@@ -710,6 +731,11 @@ export function GenerationWorkspace({
       if (!response.ok) throw new Error(payload.error ?? "Generation failed.");
       setStatus("complete");
       await loadHistory();
+      toast({
+        title: "Generation request completed",
+        description: `${candidateCount} candidate${candidateCount === 1 ? "" : "s"} requested with ${selected.displayName}.`,
+        variant: "success",
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Generation failed.");
       setStatus("failed");
@@ -756,6 +782,11 @@ export function GenerationWorkspace({
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Retry failed.");
       await loadHistory();
+      toast({
+        title: "Retry started",
+        description: `A new attempt was created for “${job.briefName}”.`,
+        variant: "success",
+      });
     } catch (caught) {
       setHistoryError(
         caught instanceof Error ? caught.message : "Retry failed.",
@@ -779,6 +810,11 @@ export function GenerationWorkspace({
       if (!response.ok)
         throw new Error(payload.error ?? "Could not recover the stale job.");
       await loadHistory();
+      toast({
+        title: "Job marked interrupted",
+        description: "The stale attempt can now be retried safely.",
+        variant: "success",
+      });
     } catch (caught) {
       setHistoryError(
         caught instanceof Error
@@ -1371,20 +1407,16 @@ export function GenerationWorkspace({
               filters={historyActiveFilters}
               onClear={clearHistoryFilters}
             />
-            {historyError && (
-              <Alert className="m-3 border-destructive/40">
-                <AlertTriangle />
-                <AlertTitle>Generation recovery needs attention</AlertTitle>
-                <AlertDescription>{historyError}</AlertDescription>
-              </Alert>
-            )}
-            {historyNotice && (
-              <Alert className="m-3 border-emerald-500/35">
-                <CheckCircle2 />
-                <AlertTitle>Provider result checked</AlertTitle>
-                <AlertDescription>{historyNotice}</AlertDescription>
-              </Alert>
-            )}
+            <ToastFeedback
+              message={historyError}
+              title="Generation recovery needs attention"
+              variant="error"
+            />
+            <ToastFeedback
+              message={historyNotice}
+              title="Provider result checked"
+              variant="info"
+            />
             {historyLoading && history.length === 0 ? (
               <div className="py-10 text-center text-sm text-muted-foreground">
                 Loading generation attempts…
@@ -1560,85 +1592,72 @@ export function GenerationWorkspace({
                             {formatAppDateTime(job.createdAt)}
                           </TableCell>
                           <TableCell>
-                            <div className="flex justify-end gap-2">
-                              <Button variant="ghost" size="sm" asChild>
-                                <a href={`/provider-logs?job=${job.id}`}>
-                                  Logs
-                                </a>
-                              </Button>
-                              {job.stale && (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => void markInterrupted(job)}
-                                  disabled={retryingJobId === job.id}
-                                >
-                                  Mark interrupted
-                                </Button>
-                              )}
-                              {job.provider === "snapgen" &&
-                                (job.status === "failed" ||
-                                  job.status === "running") && (
+                            <div className="flex justify-end">
+                              <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
                                   <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() => openProviderCheck(job)}
+                                    type="button"
+                                    variant="ghost"
+                                    size="icon"
+                                    aria-label={`Actions for ${job.briefName}, attempt ${job.attemptCount}`}
                                   >
-                                    <RefreshCw /> Check provider result
+                                    <MoreVertical />
                                   </Button>
-                                )}
-                              {job.status === "failed" && (
-                                <>
-                                  <Button variant="outline" size="sm" asChild>
-                                    <a
-                                      href={`/generation?brief=${job.briefId}`}
-                                    >
-                                      Edit settings
-                                    </a>
-                                  </Button>
-                                  <AlertDialog>
-                                    <AlertDialogTrigger asChild>
-                                      <Button
-                                        size="sm"
-                                        disabled={retryingJobId === job.id}
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  {job.assets[0] && (
+                                    <DropdownMenuItem asChild>
+                                      <Link
+                                        href={`/review?imageId=${job.assets[0].id}`}
                                       >
-                                        <RotateCcw /> Retry
-                                      </Button>
-                                    </AlertDialogTrigger>
-                                    <AlertDialogContent>
-                                      <AlertDialogHeader>
-                                        <AlertDialogTitle>
-                                          Retry attempt {job.attemptCount}?
-                                        </AlertDialogTitle>
-                                        <AlertDialogDescription>
-                                          This creates a new linked attempt
-                                          using the same prompt and settings.
-                                          Estimated additional cost:{" "}
-                                          {estimateAvailable
-                                            ? formatUsd(
-                                                Number(job.estimatedCostUsd),
-                                              )
-                                            : "unavailable"}
-                                          .
-                                          {paid
-                                            ? " The previous provider request may also have been charged; review its log before confirming."
-                                            : " This provider is configured as free."}
-                                        </AlertDialogDescription>
-                                      </AlertDialogHeader>
-                                      <AlertDialogFooter>
-                                        <AlertDialogCancel>
-                                          Cancel
-                                        </AlertDialogCancel>
-                                        <AlertDialogAction
-                                          onClick={() => void retryJob(job)}
+                                        <CheckCircle2 /> Review result
+                                      </Link>
+                                    </DropdownMenuItem>
+                                  )}
+                                  <DropdownMenuItem asChild>
+                                    <a href={`/provider-logs?job=${job.id}`}>
+                                      <History /> View provider logs
+                                    </a>
+                                  </DropdownMenuItem>
+                                  {job.provider === "snapgen" &&
+                                    (job.status === "failed" ||
+                                      job.status === "running") && (
+                                      <DropdownMenuItem
+                                        onSelect={() => openProviderCheck(job)}
+                                      >
+                                        <RefreshCw /> Check provider result
+                                      </DropdownMenuItem>
+                                    )}
+                                  {(job.stale || job.status === "failed") && (
+                                    <DropdownMenuSeparator />
+                                  )}
+                                  {job.stale && (
+                                    <DropdownMenuItem
+                                      disabled={retryingJobId === job.id}
+                                      onSelect={() => void markInterrupted(job)}
+                                    >
+                                      <AlertTriangle /> Mark interrupted
+                                    </DropdownMenuItem>
+                                  )}
+                                  {job.status === "failed" && (
+                                    <>
+                                      <DropdownMenuItem asChild>
+                                        <a
+                                          href={`/generation?brief=${job.briefId}`}
                                         >
-                                          Confirm retry
-                                        </AlertDialogAction>
-                                      </AlertDialogFooter>
-                                    </AlertDialogContent>
-                                  </AlertDialog>
-                                </>
-                              )}
+                                          <WandSparkles /> Edit settings
+                                        </a>
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        disabled={retryingJobId === job.id}
+                                        onSelect={() => setRetryConfirmJob(job)}
+                                      >
+                                        <RotateCcw /> Retry generation
+                                      </DropdownMenuItem>
+                                    </>
+                                  )}
+                                </DropdownMenuContent>
+                              </DropdownMenu>
                             </div>
                           </TableCell>
                         </TableRow>
@@ -1663,6 +1682,46 @@ export function GenerationWorkspace({
           </CardContent>
         </Card>
       </div>
+      <AlertDialog
+        open={Boolean(retryConfirmJob)}
+        onOpenChange={(open) => !open && setRetryConfirmJob(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Retry attempt {retryConfirmJob?.attemptCount}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This creates a new linked attempt using the same prompt and
+              settings. Estimated additional cost:{" "}
+              {retryConfirmJob &&
+              (["mock", "imported"].includes(retryConfirmJob.provider) ||
+                typeof retryConfirmJob.modelCapabilitySnapshot
+                  ?.generationPriceUsd === "number")
+                ? formatUsd(Number(retryConfirmJob.estimatedCostUsd))
+                : "unavailable"}
+              .
+              {retryConfirmJob &&
+              !["mock", "imported"].includes(retryConfirmJob.provider)
+                ? " The previous provider request may also have been charged; review its log before confirming."
+                : " This provider is configured as free."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (!retryConfirmJob) return;
+                const job = retryConfirmJob;
+                setRetryConfirmJob(null);
+                void retryJob(job);
+              }}
+            >
+              Confirm retry
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <FilterDialog
         open={historyFilterOpen}
         onOpenChange={setHistoryFilterOpen}

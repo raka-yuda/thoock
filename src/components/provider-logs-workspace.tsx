@@ -60,6 +60,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { ToastFeedback } from "@/components/ui/toaster";
 
 type JsonValue =
   string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
@@ -111,6 +112,10 @@ function formatDuration(value: number | null) {
 }
 
 function operationLabel(operation: string) {
+  if (operation === "topic_research") return "Topic research";
+  if (operation === "brief_generation") return "Brief generation";
+  if (operation === "prompt_generation") return "Prompt generation";
+  if (operation === "metadata_generation") return "Metadata generation";
   if (operation === "history_search") return "History search";
   if (operation === "history_lookup") return "History lookup";
   if (operation === "logo_removal") return "Logo removal";
@@ -630,6 +635,10 @@ export function ProviderLogsWorkspace({ jobId }: { jobId?: string }) {
           <div className="flex flex-wrap gap-2">
             {[
               ["all", "Any"],
+              ["topic_research", "Topic research"],
+              ["brief_generation", "Brief generation"],
+              ["prompt_generation", "Prompt generation"],
+              ["metadata_generation", "Metadata generation"],
               ["image_generation", "Image generation"],
               ["history_search", "History search"],
               ["history_lookup", "History lookup"],
@@ -773,13 +782,11 @@ export function ProviderLogsWorkspace({ jobId }: { jobId?: string }) {
         </label>
       </FilterDialog>
 
-      {error && (
-        <Alert className="mb-4 border-destructive/30">
-          <AlertCircle className="text-destructive" />
-          <AlertTitle>Could not load provider logs</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      <ToastFeedback
+        message={error}
+        title="Could not load provider logs"
+        variant="error"
+      />
 
         {loading ? (
           <div className="space-y-3 p-5" aria-label="Loading provider logs">
@@ -792,9 +799,9 @@ export function ProviderLogsWorkspace({ jobId }: { jobId?: string }) {
             <ShieldCheck className="mx-auto mb-3 size-7 text-muted-foreground" />
             <p className="font-medium">No provider requests found</p>
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              New calls through /api/generation appear here after a provider is
-              invoked. Validation failures do not call a provider and are not
-              recorded in this table.
+              Provider calls from generation, research, recovery, and image
+              preparation appear here. Requests rejected before a provider is
+              invoked are not recorded.
             </p>
           </div>
         ) : (
@@ -855,6 +862,14 @@ export function ProviderLogsWorkspace({ jobId }: { jobId?: string }) {
                 const candidates =
                   valueAt(log.providerRequestBody, "candidates") ??
                   (Array.isArray(calls) ? calls.length : undefined);
+                const topicCount = valueAt(
+                  log.providerRequestBody,
+                  "count",
+                );
+                const targetRegion = valueAt(
+                  log.providerRequestBody,
+                  "targetRegion",
+                );
                 return (
                   <TableRow key={log.id}>
                     <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
@@ -873,6 +888,8 @@ export function ProviderLogsWorkspace({ jobId }: { jobId?: string }) {
                       <p>
                         {log.operation === "image_generation"
                           ? `${String(candidates ?? "—")} image(s)`
+                          : log.operation === "topic_research"
+                            ? `${String(topicCount ?? "—")} topic(s)`
                           : operationLabel(log.operation)}
                       </p>
                       <p className="text-xs text-muted-foreground">
@@ -880,6 +897,8 @@ export function ProviderLogsWorkspace({ jobId }: { jobId?: string }) {
                           ? width && height
                             ? `${String(width)} × ${String(height)}`
                             : "Dimensions unavailable"
+                          : log.operation === "topic_research"
+                            ? String(targetRegion ?? "Region unavailable")
                           : (log.providerRequestIds[0] ??
                             "Provider ID pending")}
                       </p>

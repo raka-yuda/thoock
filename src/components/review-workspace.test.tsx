@@ -1,9 +1,28 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render as renderTestingLibrary,
+  screen,
+  waitFor,
+  type RenderOptions,
+} from "@testing-library/react";
+import { StrictMode, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Toaster } from "./ui/toaster";
 import { ReviewWorkspace } from "./review-workspace";
+
+function render(ui: ReactElement, options?: RenderOptions) {
+  return renderTestingLibrary(
+    <>
+      {ui}
+      <Toaster />
+    </>,
+    options,
+  );
+}
 
 const asset = {
   id: "6d47fd1a-a646-43a0-9743-f86a7a8152ac",
@@ -41,6 +60,7 @@ const asset = {
 describe("ReviewWorkspace deep links", () => {
   beforeEach(() => {
     window.history.replaceState(null, "", "/review");
+    vi.stubGlobal("scrollTo", vi.fn());
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ data: [asset] }))),
@@ -48,6 +68,7 @@ describe("ReviewWorkspace deep links", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -66,7 +87,68 @@ describe("ReviewWorkspace deep links", () => {
     );
     expect(window.location.pathname).toBe("/review");
     expect(window.location.search).toBe(`?imageId=${asset.id}`);
-    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("/api/assets?limit=12");
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe("/api/assets?limit=15");
+  });
+
+  it("loads the initial review page under React Strict Mode", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((resolve, reject) => {
+            const abort = () =>
+              reject(new DOMException("The request was aborted", "AbortError"));
+            if (init?.signal?.aborted) {
+              abort();
+              return;
+            }
+            init?.signal?.addEventListener("abort", abort, { once: true });
+            window.setTimeout(
+              () =>
+                resolve(
+                  Response.json({
+                    data: [asset],
+                    pagination: {
+                      limit: 15,
+                      hasMore: false,
+                      nextCursor: null,
+                    },
+                  }),
+                ),
+              0,
+            );
+          }),
+      ),
+    );
+
+    render(
+      <StrictMode>
+        <ReviewWorkspace />
+      </StrictMode>,
+    );
+
+    expect(
+      await screen.findByRole("button", {
+        name: "Review Generated stock concept",
+      }),
+    ).toBeVisible();
+    expect(screen.queryByText("All matching images loaded")).toBeVisible();
+  });
+
+  it("keeps the review status readable and technical signals compact", async () => {
+    render(<ReviewWorkspace />);
+
+    expect(await screen.findByText("Generated stock concept")).toBeVisible();
+    expect(screen.getByText("pending", { exact: false })).toBeVisible();
+    expect(
+      screen.queryByLabelText("Review status: pending"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByLabelText("1.92MP: upscale required before export"),
+    ).toHaveClass("badge-icon");
+    expect(screen.getByLabelText("File format: JPEG")).toHaveClass(
+      "badge-icon",
+    );
   });
 
   it("checks every required human-review item with one explicit action", async () => {
@@ -92,6 +174,141 @@ describe("ReviewWorkspace deep links", () => {
         name: "Check all required human review items",
       }),
     ).toBeDisabled();
+  });
+
+  it("bulk approves explicitly selected image cards after confirmation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (
+          url === `/api/assets/${asset.id}/review` &&
+          init?.method === "POST"
+        ) {
+          return Response.json({
+            data: { reviewedAt: "2026-09-28T12:00:00.000Z" },
+          });
+        }
+        if (
+          url === `/api/assets/${asset.id}/metadata` &&
+          init?.method === "POST"
+        ) {
+          return Response.json({
+            data: {
+              filename: "generated-stock-concept.jpg",
+              title: "Generated stock concept",
+              category: "3",
+              language: "en",
+              keywords: ["business", "concept", "stock", "image", "modern"],
+              generativeAi: true,
+              fictionalPeopleProperty: false,
+              internalNotes: "",
+              validationErrors: [],
+            },
+          });
+        }
+        return Response.json({ data: [asset] });
+      }),
+    );
+
+    render(<ReviewWorkspace />);
+    fireEvent.click(
+      await screen.findByRole("checkbox", {
+        name: "Select Generated stock concept",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Approve selected" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm bulk approval" }),
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+        `/api/assets/${asset.id}/review`,
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    expect(
+      await screen.findByText("1 image approved and prepared with metadata."),
+    ).toBeVisible();
+  });
+
+  it("shows bulk actions only after selection and generates AI metadata for the selection", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (
+          url === `/api/assets/${asset.id}/metadata` &&
+          init?.method === "POST"
+        ) {
+          return Response.json({
+            data: {
+              filename: "generated-stock-concept.jpg",
+              title: "Generated stock concept",
+              category: "3",
+              language: "en",
+              keywords: ["business", "concept", "stock", "image", "modern"],
+              generativeAi: true,
+              fictionalPeopleProperty: false,
+              internalNotes: "Generated with OpenAI and still editable.",
+              validationErrors: [],
+            },
+          });
+        }
+        return Response.json({ data: [asset] });
+      }),
+    );
+
+    render(<ReviewWorkspace defaultMetadataProvider="openai-metadata" />);
+
+    expect(screen.queryByText("Review next")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "Bulk review actions" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(
+      await screen.findByRole("checkbox", {
+        name: "Select Generated stock concept",
+      }),
+    );
+    const bulkActionRegion = screen.getByRole("region", {
+      name: "Bulk review actions",
+    });
+    expect(bulkActionRegion).toBeVisible();
+    expect(bulkActionRegion).toHaveAttribute("data-state", "open");
+    expect(bulkActionRegion.parentElement?.parentElement).toBe(document.body);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Generate AI metadata" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Confirm AI metadata" }),
+    );
+
+    await waitFor(() =>
+      expect(vi.mocked(fetch)).toHaveBeenCalledWith(
+        `/api/assets/${asset.id}/metadata`,
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ provider: "openai-metadata" }),
+        }),
+      ),
+    );
+    expect(
+      await screen.findByText(/OpenAI created editable metadata drafts/),
+    ).toBeVisible();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear selected images" }),
+    );
+    await waitFor(() =>
+      expect(bulkActionRegion).toHaveAttribute("data-state", "closed"),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "Bulk review actions" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("creates a linked generation attempt when regeneration is confirmed", async () => {
@@ -135,10 +352,10 @@ describe("ReviewWorkspace deep links", () => {
     );
     fireEvent.click(await screen.findByRole("button", { name: "Regenerate" }));
 
-    expect(await screen.findByRole("alertdialog")).toHaveClass("z-[70]");
+    expect(await screen.findByRole("alertdialog")).toHaveClass("z-[110]");
     expect(
       document.querySelector('[data-slot="alert-dialog-overlay"]'),
-    ).toHaveClass("z-[60]");
+    ).toHaveClass("z-[100]");
   });
 
   it("does not apply a regenerate label when generation fails before creating a job", async () => {
@@ -168,7 +385,9 @@ describe("ReviewWorkspace deep links", () => {
       await screen.findByRole("button", { name: "Confirm regeneration" }),
     );
 
-    expect(await screen.findByText("The original model is disabled.")).toBeVisible();
+    expect(
+      await screen.findByText("The original model is disabled."),
+    ).toBeVisible();
     expect(
       requests.some((url) => url === `/api/assets/${asset.id}/review`),
     ).toBe(false);
@@ -229,7 +448,9 @@ describe("ReviewWorkspace deep links", () => {
         name: "Review Generated stock concept",
       }),
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Download JPEG" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Download JPEG" }),
+    );
 
     await waitFor(() =>
       expect(vi.mocked(fetch)).toHaveBeenCalledWith(
@@ -299,7 +520,10 @@ describe("ReviewWorkspace deep links", () => {
 
   it("opens the modal shell immediately while a linked asset is loading", () => {
     window.history.replaceState(null, "", `/review?imageId=${asset.id}`);
-    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
 
     render(<ReviewWorkspace initialAssetId={asset.id} />);
 
@@ -347,33 +571,17 @@ describe("ReviewWorkspace deep links", () => {
       window.history.pushState(null, "", "/review");
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
   });
 
-  it("fetches the next bounded page when the scroll sentinel approaches", async () => {
+  it("loads the next page after scroll intent near the end of the feed", async () => {
     const nextAsset = {
       ...asset,
       id: "17f1a30b-f5c0-49e1-875a-99257404fb90",
       briefName: "Second generated concept",
     };
-    let observe: IntersectionObserverCallback | undefined;
-    vi.stubGlobal(
-      "IntersectionObserver",
-      class IntersectionObserver {
-        constructor(callback: IntersectionObserverCallback) {
-          observe = callback;
-        }
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-        root = null;
-        rootMargin = "";
-        thresholds = [];
-        takeRecords() {
-          return [];
-        }
-      },
-    );
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -384,7 +592,7 @@ describe("ReviewWorkspace deep links", () => {
               ? {
                   data: [nextAsset],
                   pagination: {
-                    limit: 12,
+                    limit: 15,
                     hasMore: false,
                     nextCursor: null,
                   },
@@ -392,7 +600,7 @@ describe("ReviewWorkspace deep links", () => {
               : {
                   data: [asset],
                   pagination: {
-                    limit: 12,
+                    limit: 15,
                     hasMore: true,
                     nextCursor: "next-page",
                   },
@@ -407,12 +615,14 @@ describe("ReviewWorkspace deep links", () => {
       name: "Review Generated stock concept",
     });
 
-    act(() => {
-      observe?.(
-        [{ isIntersecting: true } as IntersectionObserverEntry],
-        {} as IntersectionObserver,
-      );
-    });
+    expect(
+      screen.queryByRole("button", {
+        name: "Review Second generated concept",
+      }),
+    ).not.toBeInTheDocument();
+    expect(vi.mocked(fetch)).toHaveBeenCalledTimes(1);
+
+    fireEvent.wheel(window);
 
     expect(
       await screen.findByRole("button", {
@@ -420,8 +630,95 @@ describe("ReviewWorkspace deep links", () => {
       }),
     ).toBeVisible();
     expect(vi.mocked(fetch)).toHaveBeenCalledWith(
-      "/api/assets?limit=12&cursor=next-page",
+      "/api/assets?limit=15&cursor=next-page",
       expect.objectContaining({ cache: "no-store" }),
     );
+  });
+
+  it("does not fetch a large preview merely because the pointer crosses a card", async () => {
+    const imageConstructor = vi.fn(() => ({ decoding: "", src: "" }));
+    vi.stubGlobal("Image", imageConstructor);
+    render(<ReviewWorkspace />);
+
+    const reviewButton = await screen.findByRole("button", {
+      name: "Review Generated stock concept",
+    });
+    const card = reviewButton.closest("article");
+    expect(card).not.toBeNull();
+
+    vi.useFakeTimers();
+    fireEvent.mouseEnter(card!);
+    expect(imageConstructor).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(300));
+    expect(imageConstructor).not.toHaveBeenCalled();
+    fireEvent.mouseLeave(card!);
+    expect(imageConstructor).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("keeps the full loaded count while mounting only nearby image rows", async () => {
+    vi.stubGlobal("innerWidth", 1600);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        if (this.hasAttribute("data-review-grid"))
+          return new DOMRect(0, 0, 1500, 0);
+        return new DOMRect();
+      },
+    );
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(
+      function (this: HTMLElement) {
+        return this.hasAttribute("data-review-row") ? 345 : 0;
+      },
+    );
+    const manyAssets = Array.from({ length: 80 }, (_, index) => ({
+      ...asset,
+      id: `00000000-0000-4000-8000-${String(index).padStart(12, "0")}`,
+      briefName: `Generated concept ${index + 1}`,
+    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          data: manyAssets,
+          pagination: { limit: 15, hasMore: false, nextCursor: null },
+        }),
+      ),
+    );
+
+    const { container } = render(<ReviewWorkspace />);
+    await waitFor(() =>
+      expect(container.querySelector("[data-review-grid]")).toHaveAttribute(
+        "data-rendered-count",
+        "80",
+      ),
+    );
+
+    const cards = container.querySelectorAll("[data-review-card]");
+    expect(cards.length).toBeGreaterThan(0);
+    expect(cards.length).toBeLessThan(80);
+    expect(cards[0]?.querySelector("img")).toHaveAttribute("loading", "eager");
+    expect(
+      Array.from(cards).some((card) =>
+        card.querySelector('[class*="backdrop-blur"]'),
+      ),
+    ).toBe(false);
+
+    const grid = container.querySelector("[data-review-grid]");
+    expect(
+      Number(grid?.getAttribute("data-mounted-count")),
+    ).toBeLessThanOrEqual(30);
+    const sizeContainer = grid?.firstElementChild as HTMLElement | null;
+    expect(
+      Number.parseFloat(sizeContainer?.style.height ?? "0"),
+    ).toBeGreaterThan(0);
+
+    const virtualRows = Array.from(
+      container.querySelectorAll<HTMLElement>("[data-review-row]"),
+    );
+    expect(virtualRows.length).toBeGreaterThan(1);
+    expect(new Set(virtualRows.map((row) => row.style.top)).size).toBe(
+      virtualRows.length,
+    );
+    expect(virtualRows.every((row) => row.style.transform === "")).toBe(true);
   });
 });

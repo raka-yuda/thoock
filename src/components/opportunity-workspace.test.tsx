@@ -4,6 +4,7 @@ import "@testing-library/jest-dom/vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OpportunityWorkspace } from "./opportunity-workspace";
+import { Toaster } from "./ui/toaster";
 
 vi.mock("./date-filter-picker", () => ({
   DateFilterPicker: ({
@@ -43,6 +44,7 @@ const createdOpportunity = {
 
 describe("OpportunityWorkspace research CSV import", () => {
   beforeEach(() => {
+    window.history.replaceState(null, "", "/opportunities");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -97,7 +99,12 @@ describe("OpportunityWorkspace research CSV import", () => {
   });
 
   it("previews and imports pasted research CSV", async () => {
-    render(<OpportunityWorkspace />);
+    render(
+      <>
+        <OpportunityWorkspace />
+        <Toaster />
+      </>,
+    );
     fireEvent.click(
       await screen.findByRole("button", { name: /import research csv/i }),
     );
@@ -121,6 +128,7 @@ describe("OpportunityWorkspace research CSV import", () => {
       ).not.toBeInTheDocument(),
     );
     expect(await screen.findByText("Imported research topic")).toBeVisible();
+    expect(await screen.findByText("Research CSV imported")).toBeVisible();
   });
 
   it("requests filtered and paginated opportunity results", async () => {
@@ -198,5 +206,48 @@ describe("OpportunityWorkspace research CSV import", () => {
     expect(
       screen.getByRole("button", { name: /research with ai/i }),
     ).toBeVisible();
+  });
+
+  it("uses explicit kebab-case URL state when creating briefs", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            data: [createdOpportunity],
+            pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 },
+          }),
+        ),
+      ),
+    );
+    render(<OpportunityWorkspace />);
+    await screen.findByText(createdOpportunity.keyword);
+    fireEvent.pointerDown(
+      screen.getByRole("button", {
+        name: `Actions for ${createdOpportunity.keyword}`,
+      }),
+      { button: 0, ctrlKey: false },
+    );
+
+    expect(await screen.findByRole("menuitem", { name: /create briefs/i }))
+      .toHaveAttribute(
+        "href",
+        `/briefs?dialog=create-ai&source-opportunity=${createdOpportunity.id}`,
+      );
+  });
+
+  it("uses the live research provider selected by server configuration", async () => {
+    render(
+      <OpportunityWorkspace defaultResearchProvider="openai-research-ai" />,
+    );
+    const addButtons = await screen.findAllByRole("button", {
+      name: /^add opportunity$/i,
+    });
+    fireEvent.click(addButtons[0]);
+    fireEvent.click(screen.getByRole("button", { name: /research with ai/i }));
+
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "OpenAI with web research",
+    );
   });
 });

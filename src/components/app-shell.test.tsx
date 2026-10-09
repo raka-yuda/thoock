@@ -30,7 +30,7 @@ describe("AppShell account menu", () => {
   });
 
   it("links account utilities to the relevant settings sections", async () => {
-    render(<AppShell ownerEmail="owner@stocklab.local"><div>Dashboard content</div></AppShell>);
+    render(<AppShell ownerEmail="owner@stocklab.local" mockMode><div>Dashboard content</div></AppShell>);
 
     fireEvent.pointerDown(
       screen.getByRole("button", { name: /open owner menu/i }),
@@ -45,7 +45,7 @@ describe("AppShell account menu", () => {
 
   it("uses the raised sidebar state for the current route", () => {
     render(
-      <AppShell ownerEmail="owner@stocklab.local">
+      <AppShell ownerEmail="owner@stocklab.local" mockMode>
         <div>Dashboard content</div>
       </AppShell>,
     );
@@ -65,7 +65,7 @@ describe("AppShell account menu", () => {
 
   it("uses the header sidebar trigger instead of a bottom collapse action", () => {
     render(
-      <AppShell ownerEmail="owner@stocklab.local">
+      <AppShell ownerEmail="owner@stocklab.local" mockMode>
         <div>Dashboard content</div>
       </AppShell>,
     );
@@ -89,7 +89,7 @@ describe("AppShell account menu", () => {
   });
 
   it("posts logout and returns to login", async () => {
-    render(<AppShell ownerEmail="owner@stocklab.local"><div>Dashboard content</div></AppShell>);
+    render(<AppShell ownerEmail="owner@stocklab.local" mockMode><div>Dashboard content</div></AppShell>);
 
     fireEvent.pointerDown(
       screen.getByRole("button", { name: /open owner menu/i }),
@@ -102,5 +102,24 @@ describe("AppShell account menu", () => {
       expect(replace).toHaveBeenCalledWith("/login");
       expect(refresh).toHaveBeenCalled();
     });
+  });
+
+  it("shows the runtime mode resolved by the server", () => {
+    const { rerender } = render(
+      <AppShell ownerEmail="owner@stocklab.local" mockMode>
+        <div>Dashboard content</div>
+      </AppShell>,
+    );
+
+    expect(screen.getByText("Mock mode")).toBeInTheDocument();
+
+    rerender(
+      <AppShell ownerEmail="owner@stocklab.local" mockMode={false}>
+        <div>Dashboard content</div>
+      </AppShell>,
+    );
+
+    expect(screen.queryByText("Mock mode")).not.toBeInTheDocument();
+    expect(screen.getByText("Live mode")).toBeInTheDocument();
   });
 });

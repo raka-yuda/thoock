@@ -18,6 +18,7 @@ import {
   Sparkles,
   Upload,
 } from "lucide-react";
+import type { ResearchProviderId } from "@/lib/runtime-config";
 import { format } from "date-fns";
 import type { DateRange } from "react-day-picker";
 import {
@@ -89,6 +90,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "./ui/popover";
+import { toast, ToastFeedback } from "./ui/toaster";
 
 type Opportunity = {
   id: string;
@@ -182,7 +184,11 @@ function getSupplyLevel(count: number) {
   return "high" as const;
 }
 
-export function OpportunityWorkspace() {
+export function OpportunityWorkspace({
+  defaultResearchProvider = "mock-research-ai",
+}: {
+  defaultResearchProvider?: ResearchProviderId;
+}) {
   const [rows, setRows] = useState<Opportunity[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -235,7 +241,7 @@ export function OpportunityWorkspace() {
   const [importBusy, setImportBusy] = useState(false);
   const [importError, setImportError] = useState("");
   const [research, setResearch] = useState({
-    provider: "mock-research-ai",
+    provider: defaultResearchProvider,
     seedTopic: "",
     targetRegion: "Indonesia",
     type: "evergreen" as OpportunityInput["type"],
@@ -535,6 +541,14 @@ export function OpportunityWorkspace() {
       if (payload.mode === "unpersisted-demo")
         setRows((current) => [...payload.data, ...current]);
       else await load();
+      toast({
+        title:
+          payload.mode === "unpersisted-demo"
+            ? "Research preview created"
+            : "Research completed",
+        description: `${payload.data.length} opportunit${payload.data.length === 1 ? "y" : "ies"} ${payload.mode === "unpersisted-demo" ? "added to this preview" : "saved to the workspace"}.`,
+        variant: payload.mode === "unpersisted-demo" ? "info" : "success",
+      });
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "AI research failed.",
@@ -562,6 +576,11 @@ export function OpportunityWorkspace() {
       if (payload.mode === "demo")
         setRows((current) => [payload.data, ...current]);
       else await load();
+      toast({
+        title: "Opportunity saved",
+        description: `“${payload.data.keyword}” is ready for review.`,
+        variant: "success",
+      });
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -643,6 +662,11 @@ export function OpportunityWorkspace() {
       }));
       setImportOpen(false);
       resetResearchImport();
+      toast({
+        title: "Research CSV imported",
+        description: `${created.length} opportunit${created.length === 1 ? "y was" : "ies were"} added.`,
+        variant: "success",
+      });
     } catch (caught) {
       setImportError(
         caught instanceof Error
@@ -725,12 +749,11 @@ export function OpportunityWorkspace() {
         }
       />
 
-      {error && (
-        <Alert className="mb-5 border-destructive/40">
-          <AlertTitle>Research workflow needs attention</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      <ToastFeedback
+        message={error}
+        title="Research workflow needs attention"
+        variant="error"
+      />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric
@@ -1094,7 +1117,9 @@ export function OpportunityWorkspace() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem asChild>
-                              <Link href={`/briefs?opportunity=${row.id}`}>
+                              <Link
+                                href={`/briefs?dialog=create-ai&source-opportunity=${row.id}`}
+                              >
                                 <FilePlus2 /> Create briefs
                               </Link>
                             </DropdownMenuItem>
@@ -1457,7 +1482,7 @@ export function OpportunityWorkspace() {
               <Field label="Research assistant">
                 <Select
                   value={research.provider}
-                  onValueChange={(provider) =>
+                  onValueChange={(provider: ResearchProviderId) =>
                     setResearch({ ...research, provider })
                   }
                 >
@@ -1470,6 +1495,9 @@ export function OpportunityWorkspace() {
                     </SelectItem>
                     <SelectItem value="gemini-research-ai">
                       Gemini AI
+                    </SelectItem>
+                    <SelectItem value="openai-research-ai">
+                      OpenAI with web research
                     </SelectItem>
                   </SelectContent>
                 </Select>

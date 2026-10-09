@@ -6,6 +6,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Checkbox } from "./ui/checkbox";
+import { toast } from "./ui/toaster";
 export function LoginForm() {
   const router = useRouter();
   const [error, setError] = useState("");
@@ -24,10 +25,21 @@ export function LoginForm() {
     });
     const value = await response.json();
     if (!response.ok) {
-      setError(value.error ?? "Sign-in failed.");
+      const message = value.error ?? "Sign-in failed.";
+      setError(message);
+      toast({
+        title: "Sign-in failed",
+        description: message,
+        variant: "error",
+      });
       setLoading(false);
       return;
     }
+    toast({
+      title: "Signed in",
+      description: "Welcome back to your private production workspace.",
+      variant: "success",
+    });
     router.replace("/dashboard");
     router.refresh();
   }

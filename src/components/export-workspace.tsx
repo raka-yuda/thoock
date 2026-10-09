@@ -36,7 +36,6 @@ import {
 import { InfoTooltip } from "./info-help";
 import { Metric } from "./metric";
 import { PageHeader } from "./page-header";
-import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -59,6 +58,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "./ui/tooltip";
+import { toast, ToastFeedback } from "./ui/toaster";
 
 type Asset = {
   id: string;
@@ -310,6 +310,7 @@ export function ExportWorkspace() {
     applyFilters(emptyFilters);
   }
   async function createExport() {
+    const exportedCount = selected.length;
     setExporting(true);
     setError("");
     try {
@@ -335,6 +336,11 @@ export function ExportWorkspace() {
       URL.revokeObjectURL(url);
       setSelected([]);
       await load();
+      toast({
+        title: "Export package downloaded",
+        description: `${exportedCount} image${exportedCount === 1 ? " was" : "s were"} packaged with Adobe metadata and reports.`,
+        variant: "success",
+      });
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Export failed.");
     } finally {
@@ -369,6 +375,11 @@ export function ExportWorkspace() {
       anchor.click();
       anchor.remove();
       URL.revokeObjectURL(url);
+      toast({
+        title: "JPEG downloaded",
+        description: `${filename} is ready for your manual Adobe upload.`,
+        variant: "success",
+      });
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -412,12 +423,11 @@ export function ExportWorkspace() {
           icon={Package}
         />
       </div>
-      {error && (
-        <Alert className="mb-4 border-destructive/40">
-          <AlertTitle>Export workflow needs attention</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
+      <ToastFeedback
+        message={error}
+        title="Export workflow needs attention"
+        variant="error"
+      />
       <Tabs id="export-tabs" defaultValue="prepare">
         <TabsList className="mb-3">
           <TabsTrigger value="prepare">Prepare package</TabsTrigger>

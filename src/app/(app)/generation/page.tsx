@@ -5,6 +5,7 @@ import {
 } from "@/components/generation-workspace";
 import { getDb } from "@/db";
 import { commercialBriefs } from "@/db/schema";
+import { resolveRuntimeConfig } from "@/lib/runtime-config";
 import { loadConfiguredModelCatalog } from "@/modules/providers/model-catalog.server";
 
 export default async function GenerationPage({
@@ -13,6 +14,7 @@ export default async function GenerationPage({
   searchParams: Promise<{ brief?: string }>;
 }) {
   const { brief: briefId } = await searchParams;
+  const { mockMode } = resolveRuntimeConfig();
   let briefDraft: GenerationDraft | null = null;
   if (
     process.env.DATABASE_URL &&
@@ -37,6 +39,7 @@ export default async function GenerationPage({
   return (
     <GenerationWorkspace
       catalog={await loadConfiguredModelCatalog()}
+      mockMode={mockMode}
       briefDraft={briefDraft}
       localUpscaleConfigured={
         process.env.LOCAL_UPSCALE_ENABLED === "true" &&

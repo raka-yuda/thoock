@@ -49,6 +49,7 @@ import {
   SidebarTooltipContent,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
+import { toast } from "@/components/ui/toaster";
 
 const navGroups = [
   {
@@ -83,9 +84,11 @@ const navGroups = [
 export function AppShell({
   children,
   ownerEmail,
+  mockMode,
 }: {
   children: React.ReactNode;
   ownerEmail: string;
+  mockMode: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -136,9 +139,14 @@ export function AppShell({
       router.replace("/login");
       router.refresh();
     } catch (error) {
-      setAccountError(
-        error instanceof Error ? error.message : "Could not sign out.",
-      );
+      const message =
+        error instanceof Error ? error.message : "Could not sign out.";
+      setAccountError(message);
+      toast({
+        title: "Sign out failed",
+        description: message,
+        variant: "error",
+      });
       setSigningOut(false);
     }
   }
@@ -292,9 +300,21 @@ export function AppShell({
               </kbd>
             </button>
             <div className="flex-1" />
-            <span className="control-raised mr-2 hidden items-center gap-2 rounded-full border border-emerald-700/20 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-900 sm:flex">
-              <span className="size-2 rounded-full bg-emerald-600" />
-              Mock mode
+            <span
+              className={cn(
+                "control-raised mr-2 hidden items-center gap-2 rounded-full border px-3 py-2 text-xs font-medium sm:flex",
+                mockMode
+                  ? "border-amber-700/20 bg-amber-50 text-amber-900 dark:bg-amber-950/45 dark:text-amber-100"
+                  : "border-emerald-700/20 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/45 dark:text-emerald-100",
+              )}
+            >
+              <span
+                className={cn(
+                  "size-2 rounded-full",
+                  mockMode ? "bg-amber-500" : "bg-emerald-600",
+                )}
+              />
+              {mockMode ? "Mock mode" : "Live mode"}
             </span>
             <Button
               variant="ghost"

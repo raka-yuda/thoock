@@ -57,6 +57,7 @@ const brief = {
 describe("BriefWorkspace", () => {
   beforeEach(() => {
     push.mockReset();
+    window.history.replaceState(null, "", "/briefs");
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -185,6 +186,136 @@ describe("BriefWorkspace", () => {
       "Add a commercial brief manually",
     );
     expect(screen.getByRole("dialog")).toHaveTextContent("Source opportunity");
+  });
+
+  it("uses the live brief provider selected by server configuration", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const pathname = new URL(String(input), "http://localhost").pathname;
+        if (pathname === "/api/opportunities")
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: brief.opportunityId,
+                  keyword: brief.opportunityKeyword,
+                  opportunityScore: "70",
+                },
+              ],
+              pagination: { page: 1, pageSize: 200, total: 1, totalPages: 1 },
+            }),
+          );
+        return new Response(
+          JSON.stringify({
+            data: [brief],
+            pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 },
+          }),
+        );
+      }),
+    );
+    render(
+      <BriefWorkspace
+        mockMode={false}
+        defaultBriefProvider="gemini-brief-ai"
+        defaultPromptProvider="gemini-prompt"
+      />,
+    );
+    await screen.findByText("Calm remote-work reset");
+    fireEvent.click(await screen.findByRole("button", { name: /add brief/i }));
+    fireEvent.click(screen.getByRole("button", { name: /create with ai/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("dialog")).toHaveTextContent("Gemini AI"),
+    );
+  });
+
+  it("opens and preselects AI brief creation from kebab-case URL state", async () => {
+    window.history.replaceState(
+      null,
+      "",
+      `/briefs?from=2026-08-01&dialog=create-ai&source-opportunity=${brief.opportunityId}`,
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const pathname = new URL(String(input), "http://localhost").pathname;
+        if (pathname === "/api/opportunities")
+          return new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: brief.opportunityId,
+                  keyword: brief.opportunityKeyword,
+                  opportunityScore: "70",
+                },
+              ],
+            }),
+          );
+        return new Response(
+          JSON.stringify({
+            data: [brief],
+            pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 },
+          }),
+        );
+      }),
+    );
+
+    render(<BriefWorkspace />);
+
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Create a batch of commercial briefs",
+      }),
+    ).toHaveTextContent("Remote work wellness");
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", {
+          name: "Create a batch of commercial briefs",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+    expect(window.location.search).toBe("?from=2026-08-01");
+  });
+
+  it("treats opportunity as a list filter instead of a modal command", async () => {
+    const requests: string[] = [];
+    window.history.replaceState(
+      null,
+      "",
+      `/briefs?opportunity=${brief.opportunityId}`,
+    );
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        requests.push(url);
+        const pathname = new URL(url, "http://localhost").pathname;
+        if (pathname === "/api/opportunities")
+          return new Response(JSON.stringify({ data: [] }));
+        return new Response(
+          JSON.stringify({
+            data: [brief],
+            pagination: { page: 1, pageSize: 10, total: 1, totalPages: 1 },
+          }),
+        );
+      }),
+    );
+
+    render(<BriefWorkspace />);
+
+    expect(await screen.findByText("Calm remote-work reset")).toBeVisible();
+    expect(
+      screen.queryByRole("dialog", {
+        name: "Create a batch of commercial briefs",
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      requests.some((url) =>
+        url.includes(`opportunity=${brief.opportunityId}`),
+      ),
+    ).toBe(true);
   });
 
   it("allows a short but non-empty manual subject to be saved", async () => {

@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { and, count, desc, eq, gte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import {
   ArrowRight,
   BookOpenText,
@@ -30,6 +30,7 @@ import {
   assetMetadata,
   assetReviews,
   commercialBriefs,
+  derivedAssets,
   generatedAssets,
   generationJobs,
   opportunities,
@@ -146,6 +147,7 @@ export default async function DashboardPage() {
           createdAt: generationJobs.createdAt,
           cost: generationJobs.actualCostUsd,
           storageKey: generatedAssets.storageKey,
+          activeDerivedAssetId: generatedAssets.activeDerivedAssetId,
         })
         .from(generationJobs)
         .innerJoin(
@@ -162,6 +164,7 @@ export default async function DashboardPage() {
         .select({
           id: generatedAssets.id,
           storageKey: generatedAssets.storageKey,
+          activeDerivedAssetId: generatedAssets.activeDerivedAssetId,
           briefName: commercialBriefs.name,
         })
         .from(generatedAssets)
@@ -183,8 +186,32 @@ export default async function DashboardPage() {
       awaitingReview: reviewCount[0].value,
       exportReady: Number(exportCount[0].value),
     };
-    recentJobs = jobs;
-    recentImages = images;
+    const activeDerivedIds = [...jobs, ...images].flatMap((item) =>
+      item.activeDerivedAssetId ? [item.activeDerivedAssetId] : [],
+    );
+    const activeDerivedRows = activeDerivedIds.length
+      ? await db
+          .select({ id: derivedAssets.id, storageKey: derivedAssets.storageKey })
+          .from(derivedAssets)
+          .where(inArray(derivedAssets.id, activeDerivedIds))
+      : [];
+    const activeStorageById = new Map(
+      activeDerivedRows.map((derived) => [derived.id, derived.storageKey]),
+    );
+    recentJobs = jobs.map(({ activeDerivedAssetId, ...job }) => ({
+      ...job,
+      storageKey:
+        (activeDerivedAssetId
+          ? activeStorageById.get(activeDerivedAssetId)
+          : null) ?? job.storageKey,
+    }));
+    recentImages = images.map(({ activeDerivedAssetId, ...image }) => ({
+      ...image,
+      storageKey:
+        (activeDerivedAssetId
+          ? activeStorageById.get(activeDerivedAssetId)
+          : null) ?? image.storageKey,
+    }));
     const usdToIdr = Number(settings[0]?.usdToIdr ?? 16_250);
     const generationIdr = Number(generationSpend[0].value) * usdToIdr;
     const upscalingIdr = Number(upscaleSpend[0].value) * usdToIdr;

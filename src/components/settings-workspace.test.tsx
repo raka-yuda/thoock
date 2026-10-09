@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 
 import "@testing-library/jest-dom/vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { SettingsWorkspace } from "./settings-workspace";
+import { Toaster } from "./ui/toaster";
 
 describe("SettingsWorkspace destinations", () => {
   beforeAll(() => {
@@ -44,5 +45,21 @@ describe("SettingsWorkspace destinations", () => {
     const card = screen.getByText("SnapGenAI").closest('[data-slot="card"]');
     expect(card).not.toBeNull();
     expect(within(card as HTMLElement).getByText("Active")).toBeVisible();
+  });
+
+  it("explains that the current settings editor is server-managed", async () => {
+    render(
+      <>
+        <SettingsWorkspace initialTab="cost" />
+        <Toaster />
+      </>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
+
+    expect(await screen.findByText("Settings were not saved")).toBeVisible();
+    expect(
+      screen.getByText(/currently mirrors server configuration/i),
+    ).toBeVisible();
   });
 });

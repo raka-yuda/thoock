@@ -136,7 +136,11 @@ select {
 
 .thoock-grain {
   background:
-    radial-gradient(circle at 78% 3%, rgb(255 255 255 / 0.78), transparent 28rem),
+    radial-gradient(
+      circle at 78% 3%,
+      rgb(255 255 255 / 0.78),
+      transparent 28rem
+    ),
     var(--background);
 }
 
@@ -156,18 +160,36 @@ select {
 
 .control-inset {
   box-shadow:
-    inset 0 1px 3px color-mix(in oklab, var(--control-shadow-strong) 38%, transparent),
+    inset 0 1px 3px
+      color-mix(in oklab, var(--control-shadow-strong) 38%, transparent),
     0 1px 0 var(--control-highlight);
 }
 
 .login-geometry {
   opacity: 0.46;
   background-image:
-    linear-gradient(45deg, transparent 49.7%, var(--border) 50%, transparent 50.3%),
-    linear-gradient(-45deg, transparent 49.7%, var(--border) 50%, transparent 50.3%);
-  background-position: 0 0, 7rem 0;
+    linear-gradient(
+      45deg,
+      transparent 49.7%,
+      var(--border) 50%,
+      transparent 50.3%
+    ),
+    linear-gradient(
+      -45deg,
+      transparent 49.7%,
+      var(--border) 50%,
+      transparent 50.3%
+    );
+  background-position:
+    0 0,
+    7rem 0;
   background-size: 14rem 14rem;
-  mask-image: linear-gradient(180deg, black 0%, rgb(0 0 0 / 0.58) 70%, transparent 112%);
+  mask-image: linear-gradient(
+    180deg,
+    black 0%,
+    rgb(0 0 0 / 0.58) 70%,
+    transparent 112%
+  );
 }
 
 .login-auth-emblem {
@@ -190,7 +212,11 @@ select {
   z-index: -1;
   border: 1px solid rgb(255 255 255 / 0.82);
   border-radius: 0.82rem;
-  background: linear-gradient(155deg, rgb(255 255 255 / 0.7), rgb(206 238 217 / 0.42));
+  background: linear-gradient(
+    155deg,
+    rgb(255 255 255 / 0.7),
+    rgb(206 238 217 / 0.42)
+  );
   box-shadow:
     inset 0 1px 2px rgb(255 255 255 / 0.92),
     inset 0 -2px 4px rgb(25 116 76 / 0.11);
@@ -207,7 +233,8 @@ select {
 }
 
 .login-auth-emblem svg {
-  filter: drop-shadow(0 1px 0 rgb(255 255 255 / 0.95)) drop-shadow(0 2px 2px rgb(17 93 59 / 0.24));
+  filter: drop-shadow(0 1px 0 rgb(255 255 255 / 0.95))
+    drop-shadow(0 2px 2px rgb(17 93 59 / 0.24));
 }
 
 .button-primary {
@@ -324,7 +351,9 @@ select {
   gap: 0.35rem;
   border-radius: var(--radius-control-compact);
   outline: none;
-  transition: color 160ms ease, background-color 160ms ease;
+  transition:
+    color 160ms ease,
+    background-color 160ms ease;
 }
 
 .table-sort-trigger:hover {
@@ -350,6 +379,13 @@ select {
     inset 0 1px 0 rgb(255 255 255 / 0.72),
     0 1px 1px var(--control-shadow),
     0 5px 11px -9px var(--control-shadow-strong);
+}
+
+.badge-raised.badge-icon {
+  width: 1.75rem;
+  min-width: 1.75rem;
+  height: 1.75rem;
+  padding: 0;
 }
 
 .dark .badge-raised {
@@ -420,8 +456,16 @@ select {
 .sidebar-shell {
   border-right: 1px solid var(--sidebar-edge);
   background:
-    radial-gradient(circle at 8% 0%, rgb(255 255 255 / 0.88), transparent 15rem),
-    linear-gradient(180deg, var(--sidebar-surface-top), var(--sidebar-surface-bottom));
+    radial-gradient(
+      circle at 8% 0%,
+      rgb(255 255 255 / 0.88),
+      transparent 15rem
+    ),
+    linear-gradient(
+      180deg,
+      var(--sidebar-surface-top),
+      var(--sidebar-surface-bottom)
+    );
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.82),
     10px 0 26px -22px var(--control-shadow-strong);
@@ -429,8 +473,16 @@ select {
 
 .dark .sidebar-shell {
   background:
-    radial-gradient(circle at 8% 0%, rgb(255 255 255 / 0.055), transparent 15rem),
-    linear-gradient(180deg, var(--sidebar-surface-top), var(--sidebar-surface-bottom));
+    radial-gradient(
+      circle at 8% 0%,
+      rgb(255 255 255 / 0.055),
+      transparent 15rem
+    ),
+    linear-gradient(
+      180deg,
+      var(--sidebar-surface-top),
+      var(--sidebar-surface-bottom)
+    );
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.06),
     10px 0 28px -20px rgb(0 0 0 / 0.68);
@@ -519,7 +571,8 @@ select {
   inset: 1px 2px auto;
   z-index: 0;
   height: 46%;
-  border-radius: calc(var(--radius-control) - 2px) calc(var(--radius-control) - 2px) 52% 52%;
+  border-radius: calc(var(--radius-control) - 2px)
+    calc(var(--radius-control) - 2px) 52% 52%;
   background: linear-gradient(180deg, rgb(255 255 255 / 0.58), transparent);
   content: "";
   pointer-events: none;
@@ -536,7 +589,11 @@ select {
 }
 
 .sidebar-nav-item[data-active="true"]:hover {
-  border-color: color-mix(in oklab, var(--primary) 42%, var(--sidebar-active-edge));
+  border-color: color-mix(
+    in oklab,
+    var(--primary) 42%,
+    var(--sidebar-active-edge)
+  );
   filter: saturate(1.045) brightness(1.008);
 }
 
@@ -578,7 +635,8 @@ select {
 .sidebar-nav-item:active {
   transform: translate3d(0, 1px, 0);
   box-shadow:
-    inset 0 2px 5px color-mix(in oklab, var(--control-shadow-strong) 31%, transparent),
+    inset 0 2px 5px
+      color-mix(in oklab, var(--control-shadow-strong) 31%, transparent),
     inset 0 -1px 0 rgb(255 255 255 / 0.6),
     0 1px 1px var(--control-shadow);
 }
@@ -586,6 +644,100 @@ select {
 .login-showcase-track {
   transition: transform 780ms cubic-bezier(0.22, 1, 0.36, 1);
   will-change: transform;
+}
+
+.app-toast {
+  will-change: transform, opacity;
+}
+
+.app-toast[data-state="open"] {
+  animation: toast-enter 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.app-toast[data-state="closed"] {
+  animation: toast-exit 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.app-toast[data-swipe="move"] {
+  transform: translate3d(var(--radix-toast-swipe-move-x), 0, 0);
+}
+
+.app-toast[data-swipe="cancel"] {
+  transform: translate3d(0, 0, 0);
+  transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.app-toast[data-swipe="end"] {
+  animation: toast-swipe-exit 140ms ease-out forwards;
+}
+
+.review-bulk-action-bar {
+  transform-origin: bottom center;
+  will-change: transform, opacity;
+}
+
+.review-bulk-action-bar[data-state="open"] {
+  animation: review-bulk-action-enter 280ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.review-bulk-action-bar[data-state="closed"] {
+  pointer-events: none;
+  animation: review-bulk-action-exit 180ms cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 14px, 0) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes toast-exit {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(24px, 0, 0) scale(0.98);
+  }
+}
+
+@keyframes toast-swipe-exit {
+  from {
+    opacity: 1;
+    transform: translate3d(var(--radix-toast-swipe-end-x), 0, 0);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(calc(var(--radix-toast-swipe-end-x) + 80px), 0, 0);
+  }
+}
+
+@keyframes review-bulk-action-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 1rem, 0) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes review-bulk-action-exit {
+  from {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translate3d(0, 0.625rem, 0) scale(0.985);
+  }
 }
 
 @keyframes page-enter {

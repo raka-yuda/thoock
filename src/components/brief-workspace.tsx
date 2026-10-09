@@ -1,6 +1,10 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import type {
+  BriefProviderId,
+  PromptProviderId,
+} from "@/lib/runtime-config";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowDown,
@@ -41,6 +45,7 @@ import {
 import {
   pushUrlFilters,
   readUrlFilter,
+  replaceUrlFilters,
   urlFilterCount,
 } from "@/lib/client/url-filters";
 import { PageHeader } from "./page-header";
@@ -78,6 +83,7 @@ import {
 } from "./ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 import { Textarea } from "./ui/textarea";
+import { toast, ToastFeedback, type ToastVariant } from "./ui/toaster";
 
 type Opportunity = {
   id: string;
@@ -188,8 +194,14 @@ const presets = [
 
 export function BriefWorkspace({
   catalog = defaultModelCatalog,
+  mockMode = true,
+  defaultBriefProvider = "mock-brief-ai",
+  defaultPromptProvider = "mock-prompt",
 }: {
   catalog?: ModelCapability[];
+  mockMode?: boolean;
+  defaultBriefProvider?: BriefProviderId;
+  defaultPromptProvider?: PromptProviderId;
 }) {
   const router = useRouter();
   const [briefs, setBriefs] = useState<Brief[]>([]);
@@ -200,6 +212,7 @@ export function BriefWorkspace({
   const [statusFilter, setStatusFilter] = useState("all");
   const [orientationFilter, setOrientationFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("all");
+  const [opportunityFilter, setOpportunityFilter] = useState("all");
   const [sort, setSort] = useState("updated_desc");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
@@ -210,6 +223,7 @@ export function BriefWorkspace({
     status: "all",
     orientation: "all",
     source: "all",
+    opportunity: "all",
     from: "",
     to: "",
   });
@@ -237,18 +251,23 @@ export function BriefWorkspace({
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkError, setBulkError] = useState("");
   const [opportunityId, setOpportunityId] = useState("");
-  const [provider, setProvider] = useState("mock-brief-ai");
+  const [provider, setProvider] = useState<BriefProviderId>(
+    defaultBriefProvider,
+  );
   const [count, setCount] = useState(3);
   const [preset, setPreset] = useState(presets[0]);
   const [manualOpportunityId, setManualOpportunityId] = useState("none");
   const [manual, setManual] = useState<ManualBrief>(manualDefaults);
-  const availableModels = useMemo(
-    () =>
-      catalog.filter(
-        (item) => item.enabled && item.supportedResolutions.length > 0,
-      ),
-    [catalog],
-  );
+  const availableModels = useMemo(() => {
+    const enabled = catalog.filter(
+      (item) => item.enabled && item.supportedResolutions.length > 0,
+    );
+    if (mockMode) return enabled;
+    return [
+      ...enabled.filter((item) => !["mock", "imported"].includes(item.providerId)),
+      ...enabled.filter((item) => ["mock", "imported"].includes(item.providerId)),
+    ];
+  }, [catalog, mockMode]);
   const [selectedBriefIds, setSelectedBriefIds] = useState<string[]>([]);
   const [bulkGenerateOpen, setBulkGenerateOpen] = useState(false);
   const [bulkCapabilityId, setBulkCapabilityId] = useState(
@@ -260,7 +279,10 @@ export function BriefWorkspace({
   const [skipGenerated, setSkipGenerated] = useState(true);
   const [bulkGenerating, setBulkGenerating] = useState(false);
   const [bulkProgress, setBulkProgress] = useState({ current: 0, total: 0 });
-  const [bulkNotice, setBulkNotice] = useState("");
+  const [bulkNotice, setBulkNotice] = useState<{
+    message: string;
+    variant: ToastVariant;
+  } | null>(null);
 
   const bulkCapability =
     availableModels.find((item) => item.id === bulkCapabilityId) ??
@@ -301,7 +323,7 @@ export function BriefWorkspace({
     if (!bulkCapability || !bulkResolutionOption || bulkTargets.length === 0)
       return;
     setBulkGenerating(true);
-    setBulkNotice("");
+    setBulkNotice(null);
     setError("");
     const failures: string[] = [];
     setBulkProgress({ current: 0, total: bulkTargets.length });
@@ -344,11 +366,12 @@ export function BriefWorkspace({
     setBulkGenerating(false);
     setBulkGenerateOpen(false);
     setSelectedBriefIds([]);
-    setBulkNotice(
-      failures.length
+    setBulkNotice({
+      variant: failures.length ? "warning" : "success",
+      message: failures.length
         ? `${bulkTargets.length - failures.length} generated; ${failures.length} failed. ${failures.slice(0, 2).join(" · ")}`
         : `${bulkTargets.length} brief${bulkTargets.length === 1 ? "" : "s"} generated successfully and sent to Review.`,
-    );
+    });
     await load();
   }
 
@@ -358,6 +381,7 @@ export function BriefWorkspace({
         status: readUrlFilter("status", "all"),
         orientation: readUrlFilter("orientation", "all"),
         source: readUrlFilter("source", "all"),
+        opportunity: readUrlFilter("opportunity", "all"),
         from: readUrlFilter("from"),
         to: readUrlFilter("to"),
       };
@@ -368,19 +392,56 @@ export function BriefWorkspace({
       setStatusFilter(next.status);
       setOrientationFilter(next.orientation);
       setSourceFilter(next.source);
+      setOpportunityFilter(next.opportunity);
       setDateFrom(next.from);
       setDateTo(next.to);
       setDraftFilters(next);
     };
     syncFromUrl();
     window.addEventListener("popstate", syncFromUrl);
-    return () => window.removeEventListener("popstate", syncFromUrl);
+    window.addEventListener("thoock:urlchange", syncFromUrl);
+    return () => {
+      window.removeEventListener("popstate", syncFromUrl);
+      window.removeEventListener("thoock:urlchange", syncFromUrl);
+    };
   }, []);
+
+  useEffect(() => {
+    const syncCreateDialogFromUrl = () => {
+      const isCreateDialog = readUrlFilter("dialog") === "create-ai";
+      const requestedOpportunity = readUrlFilter("source-opportunity");
+      setCreateOpen(isCreateDialog);
+      if (isCreateDialog && requestedOpportunity)
+        setOpportunityId(requestedOpportunity);
+    };
+    syncCreateDialogFromUrl();
+    window.addEventListener("popstate", syncCreateDialogFromUrl);
+    window.addEventListener("thoock:urlchange", syncCreateDialogFromUrl);
+    return () => {
+      window.removeEventListener("popstate", syncCreateDialogFromUrl);
+      window.removeEventListener("thoock:urlchange", syncCreateDialogFromUrl);
+    };
+  }, []);
+
+  function openAiBriefDialog(sourceOpportunityId = opportunityId) {
+    if (sourceOpportunityId) setOpportunityId(sourceOpportunityId);
+    setCreateOpen(true);
+    pushUrlFilters({
+      dialog: "create-ai",
+      "source-opportunity": sourceOpportunityId || null,
+    });
+  }
+
+  function closeAiBriefDialog() {
+    setCreateOpen(false);
+    replaceUrlFilters({ dialog: null, "source-opportunity": null });
+  }
 
   function applyFilters() {
     setStatusFilter(draftFilters.status);
     setOrientationFilter(draftFilters.orientation);
     setSourceFilter(draftFilters.source);
+    setOpportunityFilter(draftFilters.opportunity);
     setDateFrom(draftFilters.from);
     setDateTo(draftFilters.to);
     setPage(1);
@@ -393,6 +454,7 @@ export function BriefWorkspace({
       status: "all",
       orientation: "all",
       source: "all",
+      opportunity: "all",
       from: "",
       to: "",
     };
@@ -400,6 +462,7 @@ export function BriefWorkspace({
     setStatusFilter("all");
     setOrientationFilter("all");
     setSourceFilter("all");
+    setOpportunityFilter("all");
     setDateFrom("");
     setDateTo("");
     setPage(1);
@@ -407,6 +470,7 @@ export function BriefWorkspace({
       status: null,
       orientation: null,
       source: null,
+      opportunity: null,
       from: null,
       to: null,
       page: 1,
@@ -444,6 +508,23 @@ export function BriefWorkspace({
             setSourceFilter("all");
             setDraftFilters((v) => ({ ...v, source: "all" }));
             pushUrlFilters({ source: null, page: 1 });
+          },
+        }
+      : null,
+    opportunityFilter !== "all"
+      ? {
+          key: "opportunity",
+          label: `Opportunity: ${
+            opportunities.find((item) => item.id === opportunityFilter)
+              ?.keyword ?? opportunityFilter
+          }`,
+          onRemove: () => {
+            setOpportunityFilter("all");
+            setDraftFilters((value) => ({
+              ...value,
+              opportunity: "all",
+            }));
+            pushUrlFilters({ opportunity: null, page: 1 });
           },
         }
       : null,
@@ -485,6 +566,8 @@ export function BriefWorkspace({
       if (orientationFilter !== "all")
         briefParams.set("orientation", orientationFilter);
       if (sourceFilter !== "all") briefParams.set("source", sourceFilter);
+      if (opportunityFilter !== "all")
+        briefParams.set("opportunity", opportunityFilter);
       if (dateFrom) briefParams.set("from", dateFrom);
       if (dateTo) briefParams.set("to", dateTo);
       const [briefResponse, opportunityResponse] = await Promise.all([
@@ -513,11 +596,19 @@ export function BriefWorkspace({
         },
       );
       setOpportunities(opportunityPayload.data);
-      const requested = new URLSearchParams(window.location.search).get(
-        "opportunity",
+      const requested = readUrlFilter("source-opportunity");
+      const requestedExists = opportunityPayload.data.some(
+        (item: Opportunity) => item.id === requested,
       );
-      setOpportunityId(requested ?? opportunityPayload.data[0]?.id ?? "");
-      if (requested) setCreateOpen(true);
+      setOpportunityId((current) =>
+        requestedExists
+          ? requested
+          : opportunityPayload.data.some(
+                (item: Opportunity) => item.id === current,
+              )
+            ? current
+            : (opportunityPayload.data[0]?.id ?? ""),
+      );
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Could not load briefs.",
@@ -529,6 +620,7 @@ export function BriefWorkspace({
     dateFrom,
     dateTo,
     orientationFilter,
+    opportunityFilter,
     page,
     pageSize,
     query,
@@ -560,8 +652,13 @@ export function BriefWorkspace({
       const payload = await response.json();
       if (!response.ok)
         throw new Error(payload.error ?? "Could not create briefs.");
-      setCreateOpen(false);
+      closeAiBriefDialog();
       await load();
+      toast({
+        title: "Commercial briefs created",
+        description: `${payload.data.length} distinct brief${payload.data.length === 1 ? " was" : "s were"} added.`,
+        variant: "success",
+      });
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Could not create briefs.",
@@ -598,6 +695,11 @@ export function BriefWorkspace({
       setManual(manualDefaults);
       setManualOpportunityId("none");
       openBrief(created);
+      toast({
+        title: "Commercial brief saved",
+        description: `“${created.name}” is ready to edit.`,
+        variant: "success",
+      });
     } catch (caught) {
       setError(
         caught instanceof Error
@@ -679,6 +781,11 @@ export function BriefWorkspace({
       }));
       setBulkOpen(false);
       resetBulkImport();
+      toast({
+        title: "Brief CSV imported",
+        description: `${created.length} brief${created.length === 1 ? " was" : "s were"} added.`,
+        variant: "success",
+      });
     } catch (caught) {
       setBulkError(
         caught instanceof Error ? caught.message : "Could not import briefs.",
@@ -713,6 +820,11 @@ export function BriefWorkspace({
       );
       setSelected(updated);
       setDraft(updated);
+      toast({
+        title: "Brief changes saved",
+        description: `“${updated.name}” was updated successfully.`,
+        variant: "success",
+      });
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Could not save brief.",
@@ -735,7 +847,7 @@ export function BriefWorkspace({
       const response = await fetch("/api/prompts", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ provider: "mock-prompt", brief }),
+        body: JSON.stringify({ provider: defaultPromptProvider, brief }),
       });
       const payload = await response.json();
       if (!response.ok)
@@ -749,6 +861,11 @@ export function BriefWorkspace({
             }
           : current,
       );
+      toast({
+        title: "Prompt rewritten",
+        description: "Review the editable prompt before image generation.",
+        variant: "success",
+      });
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : "Could not rewrite prompt.",
@@ -788,19 +905,16 @@ export function BriefWorkspace({
         }
       />
 
-      {error && (
-        <Alert className="mb-5 border-destructive/40">
-          <AlertTitle>Brief workflow needs attention</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      )}
-      {bulkNotice && (
-        <Alert className="mb-5">
-          <CheckCircle2 />
-          <AlertTitle>Bulk generation update</AlertTitle>
-          <AlertDescription>{bulkNotice}</AlertDescription>
-        </Alert>
-      )}
+      <ToastFeedback
+        message={error}
+        title="Brief workflow needs attention"
+        variant="error"
+      />
+      <ToastFeedback
+        message={bulkNotice?.message}
+        title="Bulk generation update"
+        variant={bulkNotice?.variant ?? "success"}
+      />
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <WorkspaceMetric label="Total briefs" value={String(pagination.total)} note="Matching this view" icon={BookOpenText} />
@@ -854,12 +968,14 @@ export function BriefWorkspace({
               statusFilter,
               orientationFilter,
               sourceFilter,
+              opportunityFilter,
             ])}
             onClick={() => {
               setDraftFilters({
                 status: statusFilter,
                 orientation: orientationFilter,
                 source: sourceFilter,
+                opportunity: opportunityFilter,
                 from: dateFrom,
                 to: dateTo,
               });
@@ -919,18 +1035,6 @@ export function BriefWorkspace({
               </Button>
             </>
           )}
-          {!selectedBriefIds.length && (
-            <Button
-              variant="ghost"
-              size="sm"
-              className="ml-auto"
-              onClick={() => setCreateOpen(true)}
-              disabled={!opportunities.length}
-            >
-              <Sparkles />
-              Create with AI
-            </Button>
-          )}
           </div>
         )}
         <FilterDialog
@@ -942,6 +1046,7 @@ export function BriefWorkspace({
             status: "all",
             orientation: "all",
             source: "all",
+            opportunity: "all",
             from: "",
             to: "",
           })
@@ -1004,6 +1109,26 @@ export function BriefWorkspace({
             ))}
           </div>
         </FilterSection>
+        <FilterSection label="Source opportunity">
+          <Select
+            value={draftFilters.opportunity}
+            onValueChange={(opportunity) =>
+              setDraftFilters((value) => ({ ...value, opportunity }))
+            }
+          >
+            <SelectTrigger aria-label="Filter by source opportunity">
+              <SelectValue placeholder="Any opportunity" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any opportunity</SelectItem>
+              {opportunities.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.keyword}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </FilterSection>
         <FilterSection label="Created date">
           <div className="grid gap-3 sm:grid-cols-2">
             <DateFilterPicker
@@ -1049,7 +1174,7 @@ export function BriefWorkspace({
             distinct briefs for different buyer uses and compositions.
           </p>
           {opportunities.length ? (
-            <Button className="mt-5" onClick={() => setCreateOpen(true)}>
+            <Button className="mt-5" onClick={() => openAiBriefDialog()}>
               <Plus /> Create the first briefs
             </Button>
           ) : (
@@ -1411,7 +1536,7 @@ export function BriefWorkspace({
               disabled={!opportunities.length}
               onClick={() => {
                 setAddChoiceOpen(false);
-                setCreateOpen(true);
+                openAiBriefDialog();
               }}
             >
               <span className="control-raised grid size-11 place-items-center rounded-xl border bg-emerald-50 text-primary dark:bg-emerald-950/40">
@@ -1432,7 +1557,12 @@ export function BriefWorkspace({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          if (!open) closeAiBriefDialog();
+        }}
+      >
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>Create a batch of commercial briefs</DialogTitle>
@@ -1459,7 +1589,10 @@ export function BriefWorkspace({
             </Field>
             <div className="grid gap-5 sm:grid-cols-2">
               <Field label="Brief writer">
-                <Select value={provider} onValueChange={setProvider}>
+                <Select
+                  value={provider}
+                  onValueChange={(value: BriefProviderId) => setProvider(value)}
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -1468,6 +1601,7 @@ export function BriefWorkspace({
                       Deterministic mock (free)
                     </SelectItem>
                     <SelectItem value="gemini-brief-ai">Gemini AI</SelectItem>
+                    <SelectItem value="openai-brief-ai">OpenAI</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
@@ -1506,7 +1640,7 @@ export function BriefWorkspace({
             </Alert>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>
+            <Button variant="outline" onClick={closeAiBriefDialog}>
               Cancel
             </Button>
             <Button

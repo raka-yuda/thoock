@@ -126,4 +126,51 @@ describe("ProviderLogsWorkspace", () => {
       ).toBe(true),
     );
   });
+
+  it("shows topic research requests with their count and target region", async () => {
+    const researchLog = {
+      ...providerLog,
+      id: "research-log-1",
+      generationJobId: null,
+      sourcePath: "/api/research/topics",
+      provider: "openai-research-ai",
+      model: "gpt-5.6-luna",
+      operation: "topic_research",
+      providerRequestBody: {
+        model: "gpt-5.6-luna",
+        seedTopic: "worker wellness",
+        targetRegion: "Indonesia",
+        count: 5,
+      },
+      responseBody: { topicCount: 5 },
+      providerRequestIds: [],
+      estimatedCostUsd: null,
+      actualCostUsd: null,
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            data: [researchLog],
+            pagination: {
+              page: 1,
+              pageSize: 10,
+              total: 1,
+              totalPages: 1,
+            },
+            facets: {
+              providers: ["openai-research-ai"],
+              models: ["gpt-5.6-luna"],
+            },
+          }),
+        )),
+    );
+
+    render(<ProviderLogsWorkspace />);
+
+    expect(await screen.findByText("openai-research-ai")).toBeInTheDocument();
+    expect(screen.getByText("5 topic(s)")).toBeInTheDocument();
+    expect(screen.getByText("Indonesia")).toBeInTheDocument();
+  });
 });

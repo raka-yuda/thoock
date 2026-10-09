@@ -1,7 +1,12 @@
 // @vitest-environment jsdom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { pushUrlFilters, readUrlFilter, urlFilterCount } from "./url-filters";
+import {
+  pushUrlFilters,
+  readUrlFilter,
+  replaceUrlFilters,
+  urlFilterCount,
+} from "./url-filters";
 
 describe("URL-backed workspace filters", () => {
   beforeEach(() => window.history.replaceState(null, "", "/opportunities"));
@@ -22,5 +27,15 @@ describe("URL-backed workspace filters", () => {
     expect(listener).toHaveBeenCalledOnce();
     expect(urlFilterCount(["all", "snapgen", "", false, "failed"])).toBe(2);
     window.removeEventListener("thoock:urlchange", listener);
+  });
+
+  it("replaces transient URL state without adding a history entry", () => {
+    pushUrlFilters({ from: "2026-09-01", dialog: "create-ai" });
+    const historyLength = window.history.length;
+
+    replaceUrlFilters({ dialog: null, "source-opportunity": null });
+
+    expect(window.location.search).toBe("?from=2026-09-01");
+    expect(window.history.length).toBe(historyLength);
   });
 });

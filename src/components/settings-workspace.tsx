@@ -13,6 +13,7 @@ import { Label } from "./ui/label";
 import { Progress } from "./ui/progress";
 import { Switch } from "./ui/switch";
 import { Textarea } from "./ui/textarea";
+import { toast } from "./ui/toaster";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type SettingsSection = "general" | "security" | "providers" | "models" | "storage" | "budget";
@@ -33,7 +34,7 @@ function initialSection(tab: "cost" | "providers" | "compliance" | "security"): 
   return "general";
 }
 
-export function SettingsWorkspace({ initialTab = "cost", snapgenConfigured = false }: { initialTab?: "cost" | "providers" | "compliance" | "security"; snapgenConfigured?: boolean }) {
+export function SettingsWorkspace({ initialTab = "cost", snapgenConfigured = false, openAIConfigured = false, mockMode = true }: { initialTab?: "cost" | "providers" | "compliance" | "security"; snapgenConfigured?: boolean; openAIConfigured?: boolean; mockMode?: boolean }) {
   const [section, setSection] = useState<SettingsSection>(initialSection(initialTab));
   function selectSection(next: SettingsSection) {
     setSection(next);
@@ -57,9 +58,9 @@ export function SettingsWorkspace({ initialTab = "cost", snapgenConfigured = fal
           })}
         </nav>
         <section className="workspace-panel min-h-[680px] p-5 sm:p-6" role="tabpanel">
-          {section === "general" && <GeneralSettings />}
+          {section === "general" && <GeneralSettings mockMode={mockMode} />}
           {section === "security" && <SecuritySettings />}
-          {section === "providers" && <ProviderSettings snapgenConfigured={snapgenConfigured} />}
+          {section === "providers" && <ProviderSettings snapgenConfigured={snapgenConfigured} openAIConfigured={openAIConfigured} mockMode={mockMode} />}
           {section === "models" && <ModelSettings />}
           {section === "storage" && <StorageSettings />}
           {section === "budget" && <BudgetComplianceSettings />}
@@ -73,14 +74,23 @@ function SectionHeading({ title, description }: { title: string; description: st
   return <div className="mb-6 border-b pb-5"><h2 className="text-xl font-semibold tracking-[-.025em]">{title}</h2><p className="mt-1 text-sm text-muted-foreground">{description}</p></div>;
 }
 
-function GeneralSettings() {
+function GeneralSettings({ mockMode }: { mockMode: boolean }) {
+  function explainServerManagedSettings() {
+    toast({
+      title: "Settings were not saved",
+      description:
+        "This editor currently mirrors server configuration. Update the VPS environment or database configuration, then restart Thoock to apply changes.",
+      variant: "warning",
+    });
+  }
+
   return (
     <div>
       <SectionHeading title="General settings" description="Basic information and production preferences." />
       <div className="grid gap-5 md:grid-cols-2">
         <Field label="Workspace name" info="Used throughout the private interface."><Input defaultValue="Thoock" /></Field>
         <Field label="Default region" info="Used as the starting region for new research."><Input defaultValue="Indonesia" /></Field>
-        <div className="flex min-h-20 items-center justify-between gap-4 rounded-xl border bg-muted/20 p-4"><div><InfoLabel label="Mock mode" info="Generate preview images without spending provider credits." /><p className="mt-1 text-xs text-muted-foreground">Safe local development outputs.</p></div><Switch defaultChecked aria-label="Mock mode" /></div>
+        <div className="flex min-h-20 items-center justify-between gap-4 rounded-xl border bg-muted/20 p-4"><div><InfoLabel label="Mock mode" info="Controlled by MOCK_MODE in the server environment." /><p className="mt-1 text-xs text-muted-foreground">{mockMode ? "Mock providers are preferred by default." : "Configured live providers are preferred by default."}</p></div><Switch checked={mockMode} disabled aria-label="Mock mode" /></div>
         <Field label="Adobe minimum resolution" info="Export is blocked below this inspected resolution."><UnitInput defaultValue="4" unit="MP" /></Field>
         <Field label="Image preparation target" info="Small safety margin used for processing."><UnitInput defaultValue="4.2" unit="MP" /></Field>
       </div>
@@ -93,7 +103,7 @@ function GeneralSettings() {
           <Field label="Local storage path" info="Server-controlled path; browser input cannot access arbitrary files."><Input defaultValue="/Volumes/Thoock/Generations" /></Field>
         </div>
       </div>
-      <div className="mt-7 flex justify-end"><Button onClick={() => window.dispatchEvent(new Event("stocklab:demo-toast"))}><Save /> Save changes</Button></div>
+      <div className="mt-7 flex justify-end"><Button onClick={explainServerManagedSettings}><Save /> Save changes</Button></div>
     </div>
   );
 }
@@ -102,8 +112,8 @@ function SecuritySettings() {
   return <div id="storage" className="scroll-mt-24"><SectionHeading title="Security and storage" description="Single-user access and protected local data." /><div className="grid gap-4 md:grid-cols-2"><Status icon={ShieldCheck} title="Password session" detail="HTTP-only, signed, same-site cookie" /><Status icon={FolderLock} title="Private provider credentials" detail="Server-side only and never returned to the browser" /><Status icon={Database} title="Storage and database" detail="PostgreSQL workflow records with guarded storage keys" /><Status icon={CheckCircle2} title="No public registration" detail="The initial owner is created through controlled setup" /></div></div>;
 }
 
-function ProviderSettings({ snapgenConfigured }: { snapgenConfigured: boolean }) {
-  return <div><SectionHeading title="Providers" description="Server-side image generation and processing connections." /><div className="grid gap-4 xl:grid-cols-2"><ProviderCard name="Mock studio" status="Active" description="Free local development outputs and imported-image normalization." fields={["MOCK_MODE=true"]} /><ProviderCard name="SnapGenAI" status={snapgenConfigured ? "Active" : "Not configured"} description="Catalog-driven Nano, Grok, and GPT image routes with history recovery." fields={["SNAPGEN_API_BASE_URL", "SNAPGEN_API_KEY"]} /><ProviderCard name="Cloudflare Workers AI" status="Optional" description="Owner-controlled endpoint returning image bytes for local inspection." fields={["CLOUDFLARE_WORKER_AI_URL", "CLOUDFLARE_WORKER_AI_API_KEY"]} /><ProviderCard name="Local AI upscale" status="Disabled by default" description="Controlled local HTTP worker or predefined executable arguments." fields={["LOCAL_UPSCALE_ENABLED=false", "LOCAL_UPSCALE_URL"]} /></div></div>;
+function ProviderSettings({ snapgenConfigured, openAIConfigured, mockMode }: { snapgenConfigured: boolean; openAIConfigured: boolean; mockMode: boolean }) {
+  return <div><SectionHeading title="Providers" description="Server-side image generation and processing connections." /><div className="grid gap-4 xl:grid-cols-2"><ProviderCard name="Mock studio" status={mockMode ? "Default" : "Available"} description="Free local development outputs and imported-image normalization." fields={[`MOCK_MODE=${mockMode}`]} /><ProviderCard name="OpenAI" status={openAIConfigured ? "Active" : "Not configured"} description="Topic research, bulk commercial briefs, prompt writing, and Adobe metadata drafts." fields={["OPENAI_API_KEY", "OPENAI_TEXT_MODEL", "OPENAI_RESEARCH_MODEL"]} /><ProviderCard name="SnapGenAI" status={snapgenConfigured ? "Active" : "Not configured"} description="Catalog-driven Nano, Grok, and GPT image routes with history recovery." fields={["SNAPGEN_API_BASE_URL", "SNAPGEN_API_KEY"]} /><ProviderCard name="Cloudflare Workers AI" status="Optional" description="Owner-controlled endpoint returning image bytes for local inspection." fields={["CLOUDFLARE_WORKER_AI_URL", "CLOUDFLARE_WORKER_AI_API_KEY"]} /><ProviderCard name="Local AI upscale" status="Disabled by default" description="Controlled local HTTP worker or predefined executable arguments." fields={["LOCAL_UPSCALE_ENABLED=false", "LOCAL_UPSCALE_URL"]} /></div></div>;
 }
 
 function ModelSettings() {
@@ -115,7 +125,16 @@ function StorageSettings() {
 }
 
 function BudgetComplianceSettings() {
-  return <div><SectionHeading title="Budget and compliance" description="Enforce cost boundaries and Adobe-oriented preparation gates." /><div className="grid gap-5 md:grid-cols-2"><Field label="Monthly limit (IDR)"><Input type="number" defaultValue={500000} /></Field><Field label="Candidate-count limit"><Input type="number" defaultValue={6} /></Field></div><div className="mt-5 space-y-3"><Setting label="Warn at 80%" detail="Warn before the budget is exhausted" checked /><Setting label="Hard stop at 100%" detail="Block paid requests unless explicitly overridden" checked /><Setting label="Require post-upscale review" detail="Every enlarged result returns to human review" checked /><Setting label="Allow Creative Upscale" detail="Disabled because it may reinterpret source detail" /></div><div className="mt-5"><Field label="Prohibited terms, one per line" info="A configurable advisory metadata and prompt safety list."><Textarea className="min-h-44 font-mono text-xs" defaultValue={"generative ai\n--ar\n--stylize\ndisney\nmarvel\nstar wars\nharry potter\npokemon"} /></Field></div><div className="mt-6 flex justify-end"><Button><Save /> Save changes</Button></div></div>;
+  function explainServerManagedSettings() {
+    toast({
+      title: "Settings were not saved",
+      description:
+        "Budget and compliance controls are currently server-managed. Update the persisted application configuration before relying on changed values.",
+      variant: "warning",
+    });
+  }
+
+  return <div><SectionHeading title="Budget and compliance" description="Enforce cost boundaries and Adobe-oriented preparation gates." /><div className="grid gap-5 md:grid-cols-2"><Field label="Monthly limit (IDR)"><Input type="number" defaultValue={500000} /></Field><Field label="Candidate-count limit"><Input type="number" defaultValue={6} /></Field></div><div className="mt-5 space-y-3"><Setting label="Warn at 80%" detail="Warn before the budget is exhausted" checked /><Setting label="Hard stop at 100%" detail="Block paid requests unless explicitly overridden" checked /><Setting label="Require post-upscale review" detail="Every enlarged result returns to human review" checked /><Setting label="Allow Creative Upscale" detail="Disabled because it may reinterpret source detail" /></div><div className="mt-5"><Field label="Prohibited terms, one per line" info="A configurable advisory metadata and prompt safety list."><Textarea className="min-h-44 font-mono text-xs" defaultValue={"generative ai\n--ar\n--stylize\ndisney\nmarvel\nstar wars\nharry potter\npokemon"} /></Field></div><div className="mt-6 flex justify-end"><Button onClick={explainServerManagedSettings}><Save /> Save changes</Button></div></div>;
 }
 
 function InfoLabel({ label, info }: { label: string; info?: string }) {
@@ -124,5 +143,5 @@ function InfoLabel({ label, info }: { label: string; info?: string }) {
 function Field({ label, info, children }: { label: string; info?: string; children: React.ReactNode }) { return <div className="grid gap-2"><Label asChild><InfoLabel label={label} info={info} /></Label>{children}</div>; }
 function UnitInput({ defaultValue, unit }: { defaultValue: string; unit: string }) { return <div className="control-inset flex overflow-hidden rounded-xl border bg-card"><Input defaultValue={defaultValue} className="border-0 shadow-none focus-visible:ring-0" /><span className="grid min-w-16 place-items-center border-l bg-muted/65 px-3 text-xs text-muted-foreground">{unit}</span></div>; }
 function Setting({ label, detail, checked }: { label: string; detail: string; checked?: boolean }) { return <div className="flex items-start justify-between gap-4 rounded-xl border bg-muted/15 p-3.5"><div><p className="text-sm font-medium">{label}</p><p className="mt-1 text-xs text-muted-foreground">{detail}</p></div><Switch defaultChecked={checked} aria-label={label} /></div>; }
-function ProviderCard({ name, status, description, fields }: { name: string; status: string; description: string; fields: string[] }) { return <Card><CardHeader><div className="flex items-center justify-between"><span className="control-raised grid size-9 place-items-center rounded-lg border bg-muted"><KeyRound className="size-4" /></span><Badge variant={status === "Active" ? "success" : "secondary"}>{status}</Badge></div><CardTitle className="pt-2">{name}</CardTitle><p className="text-sm text-muted-foreground">{description}</p></CardHeader><CardContent><div className="control-inset rounded-lg border bg-muted/50 p-3 font-mono text-[11px] text-muted-foreground">{fields.map((field) => <p key={field}>{field}</p>)}</div></CardContent></Card>; }
+function ProviderCard({ name, status, description, fields }: { name: string; status: string; description: string; fields: string[] }) { return <Card><CardHeader><div className="flex items-center justify-between"><span className="control-raised grid size-9 place-items-center rounded-lg border bg-muted"><KeyRound className="size-4" /></span><Badge variant={["Active", "Default"].includes(status) ? "success" : "secondary"}>{status}</Badge></div><CardTitle className="pt-2">{name}</CardTitle><p className="text-sm text-muted-foreground">{description}</p></CardHeader><CardContent><div className="control-inset rounded-lg border bg-muted/50 p-3 font-mono text-[11px] text-muted-foreground">{fields.map((field) => <p key={field}>{field}</p>)}</div></CardContent></Card>; }
 function Status({ icon: Icon, title, detail }: { icon: typeof Database; title: string; detail: string }) { return <div className="surface-raised flex items-center gap-3 rounded-xl border bg-card p-4"><span className="control-raised grid size-10 place-items-center rounded-xl border bg-emerald-50 text-emerald-700"><Icon className="size-4" /></span><div><p className="text-sm font-medium">{title}</p><p className="mt-0.5 text-xs text-muted-foreground">{detail}</p></div></div>; }
