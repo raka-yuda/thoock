@@ -20,7 +20,7 @@ Add portfolio screenshots after starting the app:
 - Collapsible, responsive shadcn-style application shell with light and dark themes
 - Restrained tactile design system with grouped Research, Production, Delivery, and System navigation
 - Explainable opportunity scoring that labels Adobe result counts as estimated supply, not demand
-- AI-assisted topic research through deterministic mock and optional Gemini adapters; results are saved as scored opportunities
+- AI-assisted topic research through deterministic mock, Gemini, and OpenAI web-research adapters; results are saved as scored opportunities
 - Database-backed bulk brief creation that produces distinct buyer uses, scenes, compositions, and editable prompts
 - Confirmed bulk image generation from selected briefs, one generated image per brief, with duplicate prevention, cost preview, and progress
 - Structured commercial brief editor with a responsive detail dialog and practical presets
@@ -78,7 +78,7 @@ drizzle                 generated PostgreSQL migrations
 scripts                 owner setup and demonstration seed
 ```
 
-Provider contracts include `StockResearchProvider`, `TopicResearchProvider`, `BriefGenerationProvider`, `PromptGenerationProvider`, `ImageGenerationProvider`, `ImageInspectionProvider`, `ImageUpscaleProvider`, `MetadataGenerationProvider`, and `StorageProvider`. The AI research and brief interfaces each have a free deterministic adapter and an optional Gemini adapter. Provider-specific response envelopes are normalized before entering the workflow. Model capabilities and prices are data, not branches in business logic, so changing a model does not change the 4MP compliance gate.
+Provider contracts include `StockResearchProvider`, `TopicResearchProvider`, `BriefGenerationProvider`, `PromptGenerationProvider`, `ImageGenerationProvider`, `ImageInspectionProvider`, `ImageUpscaleProvider`, `MetadataGenerationProvider`, and `StorageProvider`. Topic research has a free deterministic adapter plus optional Gemini and OpenAI adapters. The OpenAI adapter uses the Responses API, structured output, and optional web search before normalizing results through the same Zod contract. Provider-specific response envelopes are normalized before entering the workflow. Model capabilities and prices are data, not branches in business logic, so changing a model does not change the 4MP compliance gate.
 
 ## Focused MVP scope
 
@@ -154,6 +154,8 @@ For interface-only review without PostgreSQL, set `AUTH_BYPASS=true` in developm
 | Variable                                                             | Required            | Purpose                                                                  |
 | -------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------ |
 | `DATABASE_URL`                                                       | Yes for persistence | PostgreSQL connection                                                    |
+| `POSTGRES_PASSWORD`                                                  | Production Docker   | Password used by the private PostgreSQL Compose service                  |
+| `THOOCK_APP_PORT`                                                    | Production Docker   | Loopback host port for Nginx; defaults to `3000`                          |
 | `SESSION_SECRET`                                                     | Yes                 | HMAC signing secret, use at least 32 random characters                   |
 | `INITIAL_USER_EMAIL`                                                 | Setup only          | Owner created by `npm run user:create`                                   |
 | `INITIAL_USER_PASSWORD`                                              | Setup only          | Plaintext setup input, remove immediately after hashing                  |
@@ -168,6 +170,12 @@ For interface-only review without PostgreSQL, set `AUTH_BYPASS=true` in developm
 | `CLOUDFLARE_WORKER_AI_ESTIMATED_COST_USD_PER_IMAGE`                 | Optional            | Owner-supplied estimate required before Cloudflare models are enabled     |
 | `BFL_API_BASE_URL` / `BFL_API_KEY`                                   | Optional            | Black Forest Labs generation adapter                                     |
 | `GEMINI_API_KEY`                                                     | Optional            | Gemini commercial prompts, metadata, and image generation                |
+| `OPENAI_API_KEY`                                                     | Optional            | OpenAI research, briefs, prompts, and metadata; remains server-side       |
+| `OPENAI_TEXT_MODEL`                                                  | Optional            | OpenAI brief, prompt, and metadata model; defaults to `gpt-5.6-luna`      |
+| `OPENAI_TEXT_TIMEOUT_MS`                                             | Optional            | Timeout for OpenAI structured text operations; defaults to 120000 ms      |
+| `OPENAI_RESEARCH_MODEL`                                              | Optional            | OpenAI research model; defaults to `gpt-5.6-luna`                         |
+| `OPENAI_RESEARCH_WEB_SEARCH`                                         | Optional            | Enables current web research unless set to `false`                        |
+| `APP_LOG_LEVEL`                                                      | Optional            | JSON console log threshold: `debug`, `info`, `warn`, or `error`           |
 | `STABILITY_API_KEY`                                                  | Optional            | Stability Fast, Conservative, and optionally Creative upscale            |
 | `STABILITY_*_UPSCALE_COST_USD`                                       | Optional            | Manually verified paid-upscale prices                                    |
 | `ENABLE_CREATIVE_UPSCALE`                                            | Optional            | Disabled unless exactly `true`                                           |
@@ -194,7 +202,7 @@ The active schema records opportunities, signals, briefs, generation model capab
 
 Generation provider execution still occurs inside the server request in this MVP; retry history, regeneration lineage, and stale recovery are durable, but this is not yet a detached worker. A failed retry links through `retry_of_job_id`; a reviewed image regenerated with the same settings links separately through `regenerate_of_job_id`. Paid retries and regenerations always require confirmation. A future small VPS worker can claim queued rows with `FOR UPDATE SKIP LOCKED` so work survives an application-process restart. Redis and provider webhooks are not required for that design.
 
-Opportunities and Commercial Briefs use server-backed pagination. Opportunity queries support topic/region search, type and status filters, inclusive creation-date ranges, score/date/supply sorting, and configurable page size. Brief queries support text search, status, orientation and source filters, inclusive creation-date ranges, date/name sorting, and configurable page size. Filter dialogs write their applied state to URL query parameters so a filtered view survives refresh, participates in browser history, and can be shared. Generation history and provider logs also support inclusive date ranges; the end date covers the complete calendar day using `APP_TIME_ZONE_OFFSET_MINUTES` (Asia/Jakarta UTC+7 by default).
+Opportunities and Commercial Briefs use server-backed pagination. Opportunity queries support topic/region search, type and status filters, inclusive creation-date ranges, score/date/supply sorting, and configurable page size. Brief queries support text search, status, orientation and source filters, inclusive updated-date ranges, updated/name sorting, and configurable page size. Filter dialogs write their applied state to URL query parameters so a filtered view survives refresh, participates in browser history, and can be shared. Generation history and provider logs also support inclusive date ranges; the end date covers the complete calendar day using `APP_TIME_ZONE_OFFSET_MINUTES` (Asia/Jakarta UTC+7 by default).
 
 ## Mock provider workflow
 
@@ -204,7 +212,7 @@ The research assistant does not have privileged Adobe sales data. Its competitio
 
 ### Connected production walkthrough
 
-1. Open **Opportunities** and choose **Research with AI**. The deterministic adapter works without credentials; select Gemini after setting `GEMINI_API_KEY`.
+1. Open **Opportunities** and choose **Research with AI**. The deterministic adapter works without credentials; select Gemini after setting `GEMINI_API_KEY`, or OpenAI after setting `OPENAI_API_KEY`.
 2. Open a saved opportunity and choose **Create briefs**. Select how many distinct concepts the brief writer should create.
 3. You can also choose **Add manually** for one brief or **Import CSV** for a reviewed batch from an external chat agent. Both can optionally connect to saved opportunities, blank prompts receive a free deterministic starter, and Adobe metadata can be entered before generation.
 4. Open a brief card to edit its commercial direction, generation prompt, and reusable Adobe metadata plan. Changes persist in PostgreSQL.
@@ -230,7 +238,13 @@ If a complete price is unavailable, the UI displays **Cost unavailable**. Paid e
 
 ### Provider request logs
 
-Open **Provider logs** in the sidebar to inspect the most recent provider invocations made through `/api/generation`. One row is created immediately before `ImageGenerationProvider.generate()` runs, then updated with success or failure, duration, provider request IDs, estimated/actual cost, and a response summary. Providers may expose their exact normalized external request shape; the Cloudflare entry shows each outgoing Worker JSON body. Validation failures that never reach a provider are intentionally absent.
+Open **Provider logs** in the sidebar to inspect image generation, AI research, commercial-brief writing, prompt writing, metadata, recovery, and logo-removal provider operations. One row is created immediately before the external operation runs, then updated with success or failure, duration, provider request IDs, estimated/actual cost, and a sanitized response summary. Providers may expose their normalized external request shape; credentials and binary image data are never stored.
+
+### Server and API logs
+
+Thoock writes one structured JSON object per console line. Every API route emits `api.request.started` and `api.request.completed` (or `api.request.failed`) with method, path, response status, duration, and a request ID. The same request ID is included in related `provider.request.*` events and returned to the client as the `x-request-id` response header. Unhandled Next.js server errors are captured through `src/instrumentation.ts`.
+
+Set `APP_LOG_LEVEL` to `debug`, `info`, `warn`, or `error`; production defaults to `info`. Request bodies, cookies, authorization headers, configured credentials, and binary image bytes are not printed. Query parameters with sensitive names are redacted. With Docker Compose, follow the application console using `docker compose -f docker-compose.prod.yml logs -f app`.
 
 The log keeps the validated API body and normalized provider input so prompts, dimensions, model settings, candidate count, and seed can be diagnosed. It never stores request headers, authorization values, cookies, provider credentials, or image bytes. Known sensitive object keys are redacted, binary values are replaced with a byte count, and provider error messages are scrubbed for bearer tokens and configured API secrets. Because prompts remain private creative data, the page and API are protected by the same single-owner session as the rest of Thoock.
 
@@ -284,6 +298,16 @@ Set `BFL_API_KEY` and `BFL_API_BASE_URL`, then configure an enabled model record
 The adapter sends the capability-selected aspect ratio and image-size option. A 1K/2K/4K label is never treated as proof of compliance. Thoock inspects every returned file and bases the 4MP decision on actual pixel dimensions.
 
 Google model names, pricing, output capabilities, and terms can change. Recheck the [official Gemini image-generation documentation](https://ai.google.dev/gemini-api/docs/image-generation) before paid use.
+
+### OpenAI research and production text
+
+1. Create an OpenAI API key and set `OPENAI_API_KEY` only in the server environment.
+2. Optionally override `OPENAI_RESEARCH_MODEL` for research and `OPENAI_TEXT_MODEL` for briefs, prompts, and metadata; both default to `gpt-5.6-luna`.
+3. Keep `OPENAI_RESEARCH_WEB_SEARCH=true` for current regional and trend evidence, or set it to `false` for model-only research.
+4. Open **Opportunities → Add opportunity → Research with AI**, then select **OpenAI with web research**.
+5. Open **Commercial briefs → Add brief → Create with AI** to select OpenAI for bulk brief creation. When mock mode is disabled and OpenAI is configured, OpenAI is also the default prompt and metadata-draft provider.
+
+The adapters call the server-side Responses API with strict structured output and `store: false`. Returned topics still contain directional supply estimates and provisional 0–100 scores—not Adobe demand or sales data. Briefs, prompts, and metadata remain editable drafts that require human review. Model availability, web-search support, and API pricing can change; recheck the [official OpenAI structured-output documentation](https://developers.openai.com/api/docs/guides/structured-outputs) before production use.
 
 ## Stability upscale setup
 
@@ -382,17 +406,96 @@ For a local database only:
 docker compose up -d postgres
 ```
 
-For production, create `.env.production`, set `POSTGRES_PASSWORD`, secrets, and the owner account, then:
+For production, clone this repository to `/opt/thoock/app` (or another dedicated absolute path), create `.env.production`, and set `POSTGRES_PASSWORD`, `SESSION_SECRET`, and any provider credentials. Use a URL-safe database password such as the output of `openssl rand -hex 32`, because Compose places it in the PostgreSQL connection URL. Keep the environment file only on the VPS with mode `600`.
 
 ```bash
-docker compose -f docker-compose.prod.yml up -d --build
-docker compose -f docker-compose.prod.yml exec app node scripts/migrate.mjs
-docker compose -f docker-compose.prod.yml exec app node scripts/create-user.mjs
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d postgres
+docker compose --env-file .env.production -f docker-compose.prod.yml build app
+docker compose --env-file .env.production -f docker-compose.prod.yml run --rm app node scripts/migrate.mjs
+docker compose --env-file .env.production -f docker-compose.prod.yml up -d app
+docker compose --env-file .env.production -f docker-compose.prod.yml exec app node scripts/create-user.mjs
 ```
 
-Place Nginx in front of `127.0.0.1:3000`, terminate TLS with Certbot, set a suitable upload-body limit, and proxy standard forwarding headers. Back up both the PostgreSQL volume and `stocklab_assets`. Restrict SSH, enable a firewall, and avoid exposing PostgreSQL publicly.
+Run the final `create-user` command only for initial setup or an intentional password reset. Remove `INITIAL_USER_PASSWORD` from `.env.production` afterward, then run `docker compose --env-file .env.production -f docker-compose.prod.yml up -d --force-recreate app` so the plaintext password is no longer present in the container environment.
 
-The production image uses Next.js standalone output and runs as an unprivileged user. A small Ubuntu VPS with 2 CPU cores and 2-4GB RAM is sufficient for ordinary metadata, inspection, export, and API-backed generation. Local GPU infrastructure is not required.
+### Capacity planning
+
+Thoock does not need a GPU when generation and upscaling use external providers. CPU and memory are mainly consumed by Next.js, PostgreSQL, Sharp image inspection/preparation, thumbnail generation, and ZIP creation. Sharp works with decoded pixel buffers, so a 16.9MP source can temporarily require far more memory than its compressed JPEG or PNG size. Large export batches are the main reason not to deploy the combined app and database on a 2GB VPS.
+
+| Profile | Suitable workload | vCPU | RAM | Local SSD/NVMe | Notes |
+| --- | --- | ---: | ---: | ---: | --- |
+| Functional floor | Evaluation or up to about 1,000 assets with small export batches | 2 | 4GB | 80GB | Add 2-4GB swap; avoid concurrent large exports. |
+| Recommended single-user deployment | Current workflow, provider API calls, and routine image preparation | 4 | 8GB | 100GB | Best starting point for this project. Keep backups off the VPS. |
+| Growing portfolio | About 1,000-5,000 optimized assets or larger export batches | 4-8 | 8-16GB | 200GB, or 80-100GB plus object storage | Move asset blobs to S3-compatible storage before the local disk becomes an operational constraint. |
+| Large archive | More than about 5,000-10,000 assets | 8 | 16GB | 300-500GB, preferably object storage | A separate PostgreSQL service is optional, not an MVP requirement. |
+
+The storage estimates are based on the October 2026 reference dataset: approximately 429 generated originals occupied about 11GiB after including original files, logo-removed derivatives, prepared JPEGs, thumbnails, and retained export ZIPs. That is roughly 26MiB per generated item in the current layout. Preserving originals while storing future logo-removed derivatives as high-quality JPEGs and expiring reproducible ZIPs should reduce the active target to roughly 12-14MiB per item. At that target, 1,000 assets need about 12-14GiB for image data and 5,000 need about 60-70GiB, before database data, Docker images, temporary export space, logs, and backups.
+
+These numbers are planning estimates, not quotas. Re-measure after each additional 500 assets or after changing providers because dimensions and PNG compressibility vary substantially. Keep normal disk use below 70%, investigate at 80%, and pause generation/export work at 85% until capacity is added or reproducible data is safely cleared.
+
+### Safe storage-improvement rollout
+
+The storage improvements are safe for existing data only when introduced incrementally. None of the following should overwrite an original generated asset.
+
+| Change | Safety | Required guardrail |
+| --- | --- | --- |
+| Generate smaller thumbnails and clear a reproducible thumbnail cache | Low risk | Confirm a missing thumbnail is regenerated correctly before clearing the cache. |
+| Store **new** logo-removed results as high-quality JPEGs | Low-to-medium risk | Write a new derived file, inspect it with Sharp, verify dimensions/checksum, then save its database reference. Preserve the source file. |
+| Expire downloaded export ZIPs | Medium risk | Keep export-batch metadata and first implement a clear missing-file state or package regeneration action. Do not delete ZIPs while the UI assumes every historical download remains available. |
+| Convert existing large derived PNGs | Medium-to-high risk | Copy-convert-inspect-switch the database reference, quarantine the old file, and delete it only after a backup and a verification period. Never convert in place. |
+| Delete unreferenced files | High risk without tooling | Use a dry-run report that compares storage keys with every database reference, apply a grace period, move candidates to quarantine, and delete only after a second verification. |
+| Delete generated originals | Not recommended | Archive rejected originals manually only when their lineage and audit value are no longer required. Approved or derived assets must retain their source. |
+
+The first implementation should affect new writes only and run behind a configuration flag or a small canary. Validate at least ten representative images, including fine textures and gradients, before making it the default. Existing files should remain untouched until there is a tested migration command with `--dry-run`, resumability, checksums, a quarantine period, and a database backup. This sequence avoids broken asset references and permits rollback.
+
+Thoock now stores new successful SnapGen logo-removal results as inspected, high-quality JPEG derivatives. Each generated asset has an explicit canonical-derived pointer: a failed cleanup leaves that pointer and the visible image unchanged, while a successful automatic or manually retried cleanup switches the pointer atomically and invalidates any previously prepared JPEG. Review thumbnails, downloads, dashboard previews, preparation, and exports then resolve through the same canonical image. The provider original remains preserved for lineage and rollback; no existing original is deleted by this change.
+
+### Deployment plan
+
+1. **Choose the initial host.** Use Ubuntu 24.04 LTS with the recommended 4-vCPU, 8GB RAM, and 100GB SSD/NVMe profile. Point the domain to it, but do not expose PostgreSQL or the application container directly to the internet.
+2. **Back up the current installation.** During a short no-write maintenance window, create a PostgreSQL dump and copy the complete local storage directory. The database and files are one logical snapshot because database rows contain storage keys. Verify that both backups can be read before deployment.
+3. **Provision the VPS once.** Run `scripts/setup-vm.sh` as root, review the firewall, add the restricted deploy user's SSH key, and keep the repository checkout under `/opt/thoock/app`. The script installs Docker, Nginx, Certbot, and the deployment prerequisites.
+4. **Configure secrets on the VPS.** Edit `.env.production` there, keep it mode `600`, set the owner credentials and provider keys, and leave `AUTH_BYPASS` disabled. Never place production credentials in GitHub variables, the repository, an image, or a database seed.
+5. **Restore existing data together.** Start PostgreSQL, restore the database snapshot, copy the asset tree into the `stocklab_assets` volume while the app is stopped, and then run migrations. For a new empty installation, use the standard Compose commands above instead.
+6. **Validate before opening traffic.** Compare database row counts, storage size, and a sample of original/derived checksums with the source installation. Test login, one existing image preview/download, a mock generation, review, metadata preparation, and a small ZIP export.
+7. **Enable Nginx and TLS.** Run `scripts/setup-nginx.sh` after DNS resolves. Keep the Docker port bound to loopback and confirm HTTPS redirects and the configured upload limit.
+8. **Enable CI/CD.** Add the protected GitHub `production` environment only after the manual deployment works. A production deployment should start only when no generation, upscale, logo-removal, or export request is running, because the current modular-monolith request execution is durable in the database but not a detached worker.
+9. **Operate and back up.** Send daily PostgreSQL dumps and asset backups to a different machine or object-storage account. A practical starting policy is seven daily and four weekly restore points. Test a restore periodically; a backup that has never been restored is not yet verified.
+
+The current deployment script performs a checked, fast-forward deployment and a health check, but it is not zero-downtime and does not automatically roll back database migrations. Before schema-changing releases, take a database backup, retain the prior Git revision/image, and schedule a brief maintenance window. Deploying application-only changes can still replace the container, so do not deploy during a paid provider request.
+
+### GitHub Actions deployment
+
+`.github/workflows/ci-cd.yml` runs linting, type checking, tests, a Next.js production build, and a Docker build. A push to `main` deploys only after all checks pass. Application and provider secrets are never copied through GitHub Actions; `.env.production` remains on the VPS.
+
+Create a protected GitHub environment named `production` and configure these environment secrets:
+
+- `VPS_HOST`: the VPS hostname or IP address;
+- `VPS_USER`: a restricted deployment user with Docker access;
+- `VPS_SSH_PRIVATE_KEY`: the private key for that user;
+- `VPS_SSH_KNOWN_HOSTS`: the pinned `known_hosts` entry for the VPS, collected through a trusted channel.
+
+Optional GitHub environment variables:
+
+- `VPS_DEPLOY_DIR`: defaults to `/opt/thoock/app`;
+- `VPS_SSH_PORT`: defaults to `22`;
+- `VPS_APP_PORT`: loopback-only host port used by Docker and Nginx, defaults to `3000`.
+
+Prepare the VPS once:
+
+```bash
+sudo install -d -o "$USER" -g "$USER" /opt/thoock/app
+git clone https://github.com/raka-yuda/thoock.git /opt/thoock/app
+cd /opt/thoock/app
+cp .env.example .env.production
+chmod 600 .env.production
+```
+
+Edit `.env.production` directly on the VPS before enabling the workflow. The deployment script performs a fast-forward-only update, verifies that the checked-out commit matches the revision that passed CI, builds the image, starts PostgreSQL, applies migrations, replaces the app container, and checks the login page on `VPS_APP_PORT`. It does not seed demo data or reset the owner password. For a private repository, configure a read-only GitHub deploy key on the VPS checkout.
+
+Place Nginx in front of `127.0.0.1:<VPS_APP_PORT>`, terminate TLS with Certbot, set a suitable upload-body limit, and proxy standard forwarding headers. The Nginx upstream port and the GitHub `VPS_APP_PORT` variable must match. Back up both the PostgreSQL volume and `stocklab_assets`. Restrict SSH, enable a firewall, and avoid exposing PostgreSQL publicly.
+
+The production image uses Next.js standalone output and runs as an unprivileged user. Local GPU infrastructure is not required. Use the capacity table above instead of assuming compressed image size represents Sharp's peak memory requirement.
 
 ## Engineering decisions
 
