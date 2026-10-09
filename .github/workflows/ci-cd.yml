@@ -1,0 +1,123 @@
+name: CI/CD — Thoock
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: thoock-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  NODE_VERSION: "22"
+  DEPLOY_BRANCH: main
+  DEPLOY_DIR: ${{ vars.VPS_DEPLOY_DIR || '/opt/thoock/app' }}
+  SSH_PORT: ${{ vars.VPS_SSH_PORT || '22' }}
+  APP_PORT: ${{ vars.VPS_APP_PORT || '3000' }}
+
+jobs:
+  verify:
+    name: Verify application
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build Next.js application
+        run: npm run build
+
+  container:
+    name: Verify production image
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate deployment files
+        env:
+          THOOCK_ENV_FILE: .env.example
+        run: |
+          bash -n scripts/deploy.sh
+          docker compose --env-file .env.example -f docker-compose.prod.yml config --quiet
+
+      - name: Build production image
+        run: docker build --tag "thoock:${GITHUB_SHA}" .
+
+  deploy:
+    name: Deploy to VPS
+    needs: container
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+      VPS_SSH_KNOWN_HOSTS: ${{ secrets.VPS_SSH_KNOWN_HOSTS }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate deployment configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_SSH_PRIVATE_KEY"
+          test -n "$VPS_SSH_KNOWN_HOSTS"
+          [[ "$SSH_PORT" =~ ^[0-9]+$ ]]
+          [[ "$APP_PORT" =~ ^[0-9]+$ ]]
+          ((APP_PORT >= 1024 && APP_PORT <= 65535))
+          [[ "$DEPLOY_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]]
+
+      - name: Configure SSH
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          mkdir -p "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          printf '%s\n' "$VPS_SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+
+      - name: Deploy verified revision
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ssh \
+            -i "$HOME/.ssh/id_ed25519" \
+            -p "$SSH_PORT" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=4 \
+            "$VPS_USER@$VPS_HOST" \
+            "bash -s -- '$DEPLOY_DIR' '$DEPLOY_BRANCH' '$GITHUB_SHA' '$APP_PORT'" \
+            < scripts/deploy.sh
