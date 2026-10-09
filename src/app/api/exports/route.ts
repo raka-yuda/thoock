@@ -8,6 +8,7 @@ import {
   generatedAssets,
 } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { createExportArchive, type ExportItem } from "@/modules/exports/create-batch";
 import { prepareApprovedAssetForExport } from "@/modules/exports/prepare-approved-asset";
 import { LocalStorageProvider } from "@/modules/providers/storage";
@@ -19,7 +20,7 @@ const schema = z.object({
   assetIds: z.array(z.string().uuid()).min(1).max(250),
 });
 
-export async function GET() {
+async function get() {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!process.env.DATABASE_URL)
@@ -70,7 +71,7 @@ export async function GET() {
   return NextResponse.json({ data: { batches, assets }, mode: "database" });
 }
 
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!process.env.DATABASE_URL)
@@ -154,3 +155,6 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const GET = withApiLogging(get);
+export const POST = withApiLogging(post);

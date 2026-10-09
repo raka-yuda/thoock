@@ -4,12 +4,13 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { commercialBriefs, generationJobs } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 
 const actionSchema = z.object({
   action: z.literal("mark_interrupted"),
 });
 
-export async function PATCH(
+async function patch(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -61,3 +62,5 @@ export async function PATCH(
     .where(eq(commercialBriefs.id, job.briefId));
   return NextResponse.json({ data: updated });
 }
+
+export const PATCH = withApiLogging(patch);

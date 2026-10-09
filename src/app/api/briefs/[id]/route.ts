@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { commercialBriefs } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { commercialBriefInputSchema } from "@/lib/domain/commercial-brief";
 
 const updateSchema = commercialBriefInputSchema.extend({
@@ -12,7 +13,7 @@ const updateSchema = commercialBriefInputSchema.extend({
   negativePrompt: z.string().trim().max(10_000),
 }).omit({ opportunityId: true });
 
-export async function PATCH(
+async function patch(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -36,3 +37,5 @@ export async function PATCH(
     return NextResponse.json({ error: "Brief not found." }, { status: 404 });
   return NextResponse.json({ data: updated });
 }
+
+export const PATCH = withApiLogging(patch);

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE } from "@/lib/auth";
-export async function POST() {
+import { withApiLogging } from "@/lib/server/logger";
+
+async function post() {
   const response = NextResponse.json({ ok: true });
   response.cookies.set(SESSION_COOKIE, "", {
     httpOnly: true,
@@ -9,3 +11,5 @@ export async function POST() {
   });
   return response;
 }
+
+export const POST = withApiLogging(post);

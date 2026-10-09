@@ -3,12 +3,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { commercialBriefs, opportunities } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import {
   commercialBriefInputSchema,
   completeBriefPrompts,
 } from "@/lib/domain/commercial-brief";
 
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!process.env.DATABASE_URL)
@@ -56,3 +57,5 @@ export async function POST(request: NextRequest) {
     { status: 201 },
   );
 }
+
+export const POST = withApiLogging(post);

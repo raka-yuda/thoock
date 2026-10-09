@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { BriefMetadataProvider } from "./metadata";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { BriefMetadataProvider, OpenAIMetadataProvider } from "./metadata";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 describe("BriefMetadataProvider", () => {
   it("creates asset metadata entirely from the saved brief plan", async () => {
@@ -59,5 +64,41 @@ describe("BriefMetadataProvider", () => {
         },
       }),
     ).rejects.toThrow(/Complete the brief metadata title/);
+  });
+});
+
+describe("OpenAIMetadataProvider", () => {
+  it("normalizes a structured OpenAI metadata draft", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      Response.json({
+        id: "resp_metadata",
+        output_text: JSON.stringify({
+          title: "Professional taking a mindful home office break",
+          category: "Business",
+          keywords: [
+            "professional",
+            "wellness",
+            "office",
+            "break",
+            "productivity",
+          ],
+          fictionalPeopleProperty: true,
+        }),
+      }),
+    );
+
+    const result = await new OpenAIMetadataProvider().generate({
+      briefName: "Mindful office break",
+      prompt: "Professional taking a break in a home office",
+      filenameHint: "mindful-office-break",
+    });
+
+    expect(result).toMatchObject({
+      category: "3",
+      generativeAi: true,
+      fictionalPeopleProperty: true,
+    });
+    expect(result.keywords).toHaveLength(5);
   });
 });

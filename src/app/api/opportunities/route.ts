@@ -21,6 +21,7 @@ import {
   opportunityInputSchema,
 } from "@/lib/domain/opportunity";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { dateOnlySchema, resolveDateRange } from "@/lib/domain/date-range";
 
 const listQuerySchema = z.object({
@@ -58,7 +59,7 @@ function startOfCurrentWeek(offsetMinutes: number, now = new Date()) {
   return new Date(shifted.getTime() - offsetMinutes * 60_000);
 }
 
-export async function GET(request: NextRequest) {
+async function get(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = listQuerySchema.safeParse(
@@ -205,7 +206,7 @@ export async function GET(request: NextRequest) {
     mode: "database",
   });
 }
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = opportunityInputSchema.safeParse(
@@ -244,3 +245,6 @@ export async function POST(request: NextRequest) {
     { status: 201 },
   );
 }
+
+export const GET = withApiLogging(get);
+export const POST = withApiLogging(post);

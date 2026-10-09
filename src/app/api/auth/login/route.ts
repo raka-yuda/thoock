@@ -4,8 +4,9 @@ import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { users } from "@/db/schema";
 import { createSessionToken, SESSION_COOKIE } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as {
     email?: string;
     password?: string;
@@ -49,3 +50,5 @@ export async function POST(request: NextRequest) {
   });
   return response;
 }
+
+export const POST = withApiLogging(post);

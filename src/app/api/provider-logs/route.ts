@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { providerRequestLogs } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { dateOnlySchema, resolveDateRange } from "@/lib/domain/date-range";
 
 const querySchema = z.object({
@@ -26,7 +27,7 @@ const querySchema = z.object({
   sort: z.enum(["newest", "oldest", "duration_asc", "duration_desc"]).default("newest"),
 });
 
-export async function GET(request: NextRequest) {
+async function get(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
@@ -130,3 +131,5 @@ export async function GET(request: NextRequest) {
     mode: "database",
   });
 }
+
+export const GET = withApiLogging(get);

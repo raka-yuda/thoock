@@ -16,17 +16,23 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { commercialBriefs, generationJobs, opportunities } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { appLogger, withApiLogging } from "@/lib/server/logger";
 import { dateOnlySchema, resolveDateRange } from "@/lib/domain/date-range";
 import { normalizeAdobeCategory } from "@/lib/domain/adobe-categories";
 import { normalizeKeywords } from "@/lib/domain/metadata";
 import { buildBriefUpdatedAtConditions } from "@/modules/briefs/list-filters";
 import { createBriefGenerationProvider } from "@/modules/providers/brief-generation";
+import { observeProviderOperation } from "@/modules/providers/request-observability";
 
 export const runtime = "nodejs";
 
 const createSchema = z.object({
   opportunityId: z.string().uuid(),
-  provider: z.enum(["mock-brief-ai", "gemini-brief-ai"]),
+  provider: z.enum([
+    "mock-brief-ai",
+    "gemini-brief-ai",
+    "openai-brief-ai",
+  ]),
   count: z.coerce.number().int().min(1).max(12).default(3),
   preset: z.string().trim().max(120).optional(),
 });
@@ -40,6 +46,7 @@ const listQuerySchema = z.object({
     .optional(),
   orientation: z.enum(["horizontal", "square", "vertical"]).optional(),
   source: z.enum(["manual", "opportunity"]).optional(),
+  opportunity: z.string().uuid().optional(),
   from: dateOnlySchema.optional(),
   to: dateOnlySchema.optional(),
   sort: z
@@ -63,7 +70,7 @@ const splitList = (value: string) =>
 const splitMetadataKeywords = (value: string) =>
   normalizeKeywords(value.split(/[|,]/));
 
-export async function GET(request: NextRequest) {
+async function get(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = listQuerySchema.safeParse(
@@ -74,8 +81,18 @@ export async function GET(request: NextRequest) {
       { error: "Invalid brief filters", issues: parsed.error.flatten() },
       { status: 400 },
     );
-  const { page, pageSize, q, status, orientation, source, sort, from, to } =
-    parsed.data;
+  const {
+    page,
+    pageSize,
+    q,
+    status,
+    orientation,
+    source,
+    opportunity,
+    sort,
+    from,
+    to,
+  } = parsed.data;
   let dateRange: ReturnType<typeof resolveDateRange>;
   try {
     dateRange = resolveDateRange(
@@ -113,6 +130,8 @@ export async function GET(request: NextRequest) {
     conditions.push(isNull(commercialBriefs.opportunityId));
   if (source === "opportunity")
     conditions.push(isNotNull(commercialBriefs.opportunityId));
+  if (opportunity)
+    conditions.push(eq(commercialBriefs.opportunityId, opportunity));
   conditions.push(...buildBriefUpdatedAtConditions(dateRange));
   const where = conditions.length ? and(...conditions) : undefined;
   const orderBy =
@@ -193,7 +212,7 @@ export async function GET(request: NextRequest) {
   });
 }
 
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   if (!process.env.DATABASE_URL)
@@ -220,7 +239,7 @@ export async function POST(request: NextRequest) {
       { status: 409 },
     );
   try {
-    const generated = await provider.generate({
+    const providerInput = {
       opportunity: {
         keyword: opportunity.keyword,
         targetRegion: opportunity.targetRegion,
@@ -229,49 +248,87 @@ export async function POST(request: NextRequest) {
       },
       count: parsed.data.count,
       preset: parsed.data.preset,
-    });
-    const created = await db.transaction(async (tx) => {
-      const rows = await tx
-        .insert(commercialBriefs)
-        .values(
-          generated.map((brief) => ({
-            opportunityId: opportunity.id,
-            name: brief.name,
-            targetBuyer: brief.targetBuyer,
-            intendedUsage: brief.intendedUsage,
-            targetMarket: brief.targetMarket,
-            mainSubject: brief.mainSubject,
-            supportingSubjects: splitList(brief.supportingSubjects),
-            environment: brief.environment,
-            visualStyle: brief.visualStyle,
-            orientation: brief.orientation,
-            composition: brief.composition,
-            copySpaceLocation: brief.copySpaceLocation,
-            lighting: brief.lighting,
-            mood: brief.mood,
-            representationNotes: brief.representationNotes,
-            prohibitedElements: splitList(brief.prohibitedElements),
-            candidateCount: 3,
-            status: "ready" as const,
-            generationPrompt: brief.generationPrompt,
-            negativePrompt: brief.negativePrompt,
-            metadataTitle: brief.metadataTitle,
-            metadataCategory:
-              normalizeAdobeCategory(brief.metadataCategory) ?? "",
-            metadataLanguage: brief.metadataLanguage,
-            metadataKeywords: splitMetadataKeywords(brief.metadataKeywords),
-            metadataFictionalPeopleProperty:
-              brief.metadataFictionalPeopleProperty,
-            metadataNotes: brief.metadataNotes,
-          })),
-        )
-        .returning();
-      await tx
-        .update(opportunities)
-        .set({ status: "briefed", updatedAt: new Date() })
-        .where(eq(opportunities.id, opportunity.id));
-      return rows;
-    });
+    };
+    const generated = await observeProviderOperation(
+      {
+        generationJobId: null,
+        sourcePath: request.nextUrl.pathname,
+        idempotencyKey: `brief-generation:${crypto.randomUUID()}`,
+        provider: provider.id,
+        model: provider.model,
+        operation: "brief_generation",
+        estimatedCostUsd: null,
+        requestBody: parsed.data,
+        providerRequest: providerInput,
+        summarizeResult: (briefs) => ({
+          briefCount: briefs.length,
+          briefNames: briefs.map((brief) => brief.name),
+        }),
+      },
+      () => provider.generate(providerInput),
+    );
+    let created: (typeof commercialBriefs.$inferSelect)[];
+    try {
+      created = await db.transaction(async (tx) => {
+        const rows = await tx
+          .insert(commercialBriefs)
+          .values(
+            generated.map((brief) => ({
+              opportunityId: opportunity.id,
+              name: brief.name,
+              targetBuyer: brief.targetBuyer,
+              intendedUsage: brief.intendedUsage,
+              targetMarket: brief.targetMarket,
+              mainSubject: brief.mainSubject,
+              supportingSubjects: splitList(brief.supportingSubjects),
+              environment: brief.environment,
+              visualStyle: brief.visualStyle,
+              orientation: brief.orientation,
+              composition: brief.composition,
+              copySpaceLocation: brief.copySpaceLocation,
+              lighting: brief.lighting,
+              mood: brief.mood,
+              representationNotes: brief.representationNotes,
+              prohibitedElements: splitList(brief.prohibitedElements),
+              candidateCount: 3,
+              status: "ready" as const,
+              generationPrompt: brief.generationPrompt,
+              negativePrompt: brief.negativePrompt,
+              metadataTitle: brief.metadataTitle,
+              metadataCategory:
+                normalizeAdobeCategory(brief.metadataCategory) ?? "",
+              metadataLanguage: brief.metadataLanguage,
+              metadataKeywords: splitMetadataKeywords(brief.metadataKeywords),
+              metadataFictionalPeopleProperty:
+                brief.metadataFictionalPeopleProperty,
+              metadataNotes: brief.metadataNotes,
+            })),
+          )
+          .returning();
+        await tx
+          .update(opportunities)
+          .set({ status: "briefed", updatedAt: new Date() })
+          .where(eq(opportunities.id, opportunity.id));
+        return rows;
+      });
+    } catch (error) {
+      appLogger.error("brief.persistence.failed", {
+        error,
+        provider: provider.id,
+        model: provider.model,
+        briefCount: generated.length,
+        maxCopySpaceLocationLength: Math.max(
+          ...generated.map((brief) => brief.copySpaceLocation.length),
+        ),
+      });
+      return NextResponse.json(
+        {
+          error:
+            "The briefs were generated but could not be saved. Apply the latest database migrations, then retry.",
+        },
+        { status: 500 },
+      );
+    }
     return NextResponse.json(
       {
         data: created.map((brief) => ({
@@ -289,3 +346,6 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const GET = withApiLogging(get);
+export const POST = withApiLogging(post);

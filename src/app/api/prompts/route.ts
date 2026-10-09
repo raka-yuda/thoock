@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { createPromptProvider } from "@/modules/providers/prompt";
+import { observeProviderOperation } from "@/modules/providers/request-observability";
 
 export const runtime = "nodejs";
 
 const briefSchema = z.object({
-  provider: z.enum(["mock-prompt", "gemini-prompt"]),
+  provider: z.enum(["mock-prompt", "gemini-prompt", "openai-prompt"]),
   brief: z.object({
     name: z.string().min(2).max(160),
     targetBuyer: z.string().min(2).max(500),
@@ -26,7 +28,7 @@ const briefSchema = z.object({
   }),
 });
 
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = briefSchema.safeParse(await request.json().catch(() => null));
@@ -42,7 +44,25 @@ export async function POST(request: NextRequest) {
       { status: 409 },
     );
   try {
-    const result = await provider.generate(parsed.data.brief);
+    const result = await observeProviderOperation(
+      {
+        generationJobId: null,
+        sourcePath: request.nextUrl.pathname,
+        idempotencyKey: `prompt-generation:${crypto.randomUUID()}`,
+        provider: provider.id,
+        model: provider.model,
+        operation: "prompt_generation",
+        estimatedCostUsd: null,
+        requestBody: parsed.data,
+        providerRequest: parsed.data.brief,
+        summarizeResult: (generated) => ({
+          promptLength: generated.prompt.length,
+          negativePromptLength: generated.negativePrompt.length,
+          rationale: generated.rationale,
+        }),
+      },
+      () => provider.generate(parsed.data.brief),
+    );
     return NextResponse.json({ data: result, provider: provider.id });
   } catch (error) {
     return NextResponse.json(
@@ -54,3 +74,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withApiLogging(post);

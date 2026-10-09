@@ -5,10 +5,11 @@ import { prepareAdobeJpeg } from "@/modules/assets/prepare";
 import { createExportArchive } from "@/modules/exports/create-batch";
 import { DeterministicMetadataProvider } from "@/modules/providers/metadata";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 
 export const runtime = "nodejs";
 
-export async function GET() {
+async function get() {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const generator = new MockImageGenerationProvider();
@@ -54,3 +55,5 @@ export async function GET() {
     },
   });
 }
+
+export const GET = withApiLogging(get);

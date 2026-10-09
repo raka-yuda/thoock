@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { DeterministicPromptProvider } from "./prompt";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { DeterministicPromptProvider, OpenAIPromptProvider } from "./prompt";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+});
 
 const brief = {
   name: "Calm remote-work reset",
@@ -27,4 +32,23 @@ describe("commercial prompt generation", () => {
     expect(result.negativePrompt).toContain("branded devices");
     expect(result.rationale).toContain("intended buyer");
   });
+});
+
+it("generates a structured prompt with OpenAI", async () => {
+  vi.stubEnv("OPENAI_API_KEY", "test-key");
+  vi.spyOn(globalThis, "fetch").mockResolvedValue(
+    Response.json({
+      id: "resp_prompt",
+      output_text: JSON.stringify({
+        prompt: "A natural commercial lifestyle photograph of a professional taking a mindful break in a contemporary home office with clean copy space on the left.",
+        negativePrompt: "logos, trademarks, malformed hands",
+        rationale: "The composition serves workplace wellness campaigns.",
+      }),
+    }),
+  );
+
+  const result = await new OpenAIPromptProvider().generate(brief);
+
+  expect(result.prompt).toContain("commercial lifestyle");
+  expect(result.negativePrompt).toContain("logos");
 });

@@ -3,6 +3,7 @@ import type { GeneratedImage, GenerationRequest } from "./contracts";
 import {
   observeProviderGeneration,
   observeProviderLogoRemoval,
+  observeProviderOperation,
   sanitizeProviderLogValue,
   type ProviderRequestLogWriter,
 } from "./request-observability";
@@ -166,6 +167,78 @@ describe("provider request observability", () => {
       "Request failed with Bearer [REDACTED] and [REDACTED]",
     );
     delete process.env.CLOUDFLARE_WORKER_AI_API_KEY;
+  });
+
+  it("records a generic topic-research request, result, and failure", async () => {
+    const successful = makeWriter();
+    const topics = [
+      {
+        keyword: "Commercial workplace hydration",
+        researchSources: ["https://example.test/source"],
+      },
+    ];
+
+    await expect(
+      observeProviderOperation(
+        {
+          generationJobId: null,
+          sourcePath: "/api/research/topics",
+          idempotencyKey: "research-request-1",
+          provider: "openai-research-ai",
+          model: "research-model",
+          operation: "topic_research",
+          estimatedCostUsd: null,
+          requestBody: { seedTopic: "worker wellness" },
+          providerRequest: {
+            model: "research-model",
+            apiKey: "must-not-be-stored",
+          },
+          summarizeResult: (result) => ({
+            topicCount: result.length,
+            topics: result,
+          }),
+        },
+        async () => topics,
+        successful.writer,
+      ),
+    ).resolves.toBe(topics);
+
+    expect(successful.calls.started).toMatchObject({
+      sourcePath: "/api/research/topics",
+      operation: "topic_research",
+      providerRequestBody: {
+        model: "research-model",
+        apiKey: "[REDACTED]",
+      },
+    });
+    expect(successful.calls.succeeded).toMatchObject({
+      responseBody: { topicCount: 1, topics },
+      providerRequestIds: [],
+      actualCostUsd: null,
+    });
+
+    const failed = makeWriter();
+    const providerError = new Error("Invalid research source");
+    await expect(
+      observeProviderOperation(
+        {
+          generationJobId: null,
+          sourcePath: "/api/research/topics",
+          idempotencyKey: "research-request-2",
+          provider: "openai-research-ai",
+          model: "research-model",
+          operation: "topic_research",
+          estimatedCostUsd: null,
+          requestBody: { seedTopic: "worker wellness" },
+          providerRequest: { model: "research-model" },
+        },
+        async () => {
+          throw providerError;
+        },
+        failed.writer,
+      ),
+    ).rejects.toBe(providerError);
+    expect(failed.calls.failed?.errorDetails).toBe("Invalid research source");
   });
 
   it("stores an accepted provider ID even when later result polling fails", async () => {

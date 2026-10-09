@@ -3,17 +3,23 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { opportunities, opportunitySignals } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import {
   calculateOpportunityScore,
   explainOpportunityScore,
   type OpportunityInput,
 } from "@/lib/domain/opportunity";
 import { createTopicResearchProvider } from "@/modules/providers/research-ai";
+import { observeProviderOperation } from "@/modules/providers/request-observability";
 
 export const runtime = "nodejs";
 
 const schema = z.object({
-  provider: z.enum(["mock-research-ai", "gemini-research-ai"]),
+  provider: z.enum([
+    "mock-research-ai",
+    "gemini-research-ai",
+    "openai-research-ai",
+  ]),
   seedTopic: z.string().trim().min(2).max(200),
   targetRegion: z.string().trim().min(2).max(80),
   type: z.enum(["evergreen", "seasonal", "trending"]),
@@ -21,7 +27,7 @@ const schema = z.object({
   portfolioContext: z.string().trim().max(2_000).optional(),
 });
 
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = schema.safeParse(await request.json().catch(() => null));
@@ -37,7 +43,35 @@ export async function POST(request: NextRequest) {
       { status: 409 },
     );
   try {
-    const researched = await provider.research(parsed.data);
+    const researched = await observeProviderOperation(
+      {
+        generationJobId: null,
+        sourcePath: request.nextUrl.pathname,
+        idempotencyKey: `topic-research:${crypto.randomUUID()}`,
+        provider: provider.id,
+        model: provider.model,
+        operation: "topic_research",
+        estimatedCostUsd: null,
+        requestBody: parsed.data,
+        providerRequest: {
+          model: provider.model,
+          seedTopic: parsed.data.seedTopic,
+          targetRegion: parsed.data.targetRegion,
+          type: parsed.data.type,
+          count: parsed.data.count,
+          portfolioContext: parsed.data.portfolioContext ?? null,
+          webSearchEnabled:
+            provider.id === "openai-research-ai"
+              ? process.env.OPENAI_RESEARCH_WEB_SEARCH !== "false"
+              : null,
+        },
+        summarizeResult: (topics) => ({
+          topicCount: topics.length,
+          topics,
+        }),
+      },
+      () => provider.research(parsed.data),
+    );
     const records = researched.map((topic) => {
       const input: OpportunityInput = {
         keyword: topic.keyword,
@@ -54,28 +88,32 @@ export async function POST(request: NextRequest) {
         input,
         rationale: topic.rationale,
         buyerUseCases: topic.buyerUseCases,
+        researchSources: topic.researchSources ?? [],
         score: calculateOpportunityScore(input),
       };
     });
     if (!process.env.DATABASE_URL)
       return NextResponse.json(
         {
-          data: records.map(({ input, rationale, buyerUseCases, score }) => ({
-            id: crypto.randomUUID(),
-            keyword: input.keyword,
-            targetRegion: input.targetRegion,
-            type: input.type,
-            adobeResultCount: input.competition,
-            trendGrowth: String(input.trendGrowth),
-            commercialIntent: String(input.commercialIntent),
-            seasonality: String(input.seasonality),
-            portfolioPerformance: String(input.portfolioPerformance),
-            opportunityScore: String(score),
-            scoreExplanation: `${explainOpportunityScore(input)} ${rationale}`,
-            status: "shortlisted",
-            researchRationale: rationale,
-            buyerUseCases,
-          })),
+          data: records.map(
+            ({ input, rationale, buyerUseCases, researchSources, score }) => ({
+              id: crypto.randomUUID(),
+              keyword: input.keyword,
+              targetRegion: input.targetRegion,
+              type: input.type,
+              adobeResultCount: input.competition,
+              trendGrowth: String(input.trendGrowth),
+              commercialIntent: String(input.commercialIntent),
+              seasonality: String(input.seasonality),
+              portfolioPerformance: String(input.portfolioPerformance),
+              opportunityScore: String(score),
+              scoreExplanation: `${explainOpportunityScore(input)} ${rationale}`,
+              status: "shortlisted",
+              researchRationale: rationale,
+              buyerUseCases,
+              researchSources,
+            }),
+          ),
           mode: "unpersisted-demo",
         },
         { status: 201 },
@@ -110,6 +148,7 @@ export async function POST(request: NextRequest) {
           rawPayload: {
             rationale: record.rationale,
             buyerUseCases: record.buyerUseCases,
+            researchSources: record.researchSources,
             competitionWarning:
               "Directional supply estimate; not live Adobe demand data",
           },
@@ -129,3 +168,5 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const POST = withApiLogging(post);

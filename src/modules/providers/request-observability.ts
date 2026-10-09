@@ -2,6 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { providerRequestLogs } from "@/db/schema";
+import { appLogger } from "@/lib/server/logger";
 import type { GeneratedImage } from "./contracts";
 import type {
   SnapgenHistoryCheckResult,
@@ -58,6 +59,7 @@ function redactErrorDetails(error: unknown) {
     process.env.SNAPGEN_API_KEY,
     process.env.BFL_API_KEY,
     process.env.GEMINI_API_KEY,
+    process.env.OPENAI_API_KEY,
     process.env.CLOUDFLARE_WORKER_AI_API_KEY,
     process.env.STABILITY_API_KEY,
   ].filter((secret): secret is string => Boolean(secret));
@@ -98,6 +100,21 @@ export interface ProviderRequestLogWriter {
   succeed(id: string, input: LogSuccess): Promise<void>;
   fail(id: string, input: LogFailure): Promise<void>;
 }
+
+export type ObservedProviderOperationContext<TResult> = {
+  generationJobId: string | null;
+  sourcePath: string;
+  idempotencyKey: string;
+  provider: string;
+  model: string;
+  operation: string;
+  estimatedCostUsd: number | null;
+  requestBody: unknown;
+  providerRequest: unknown;
+  summarizeResult?: (result: TResult) => unknown;
+  providerRequestIds?: (result: TResult) => string[];
+  actualCostUsd?: (result: TResult) => number | null;
+};
 
 function createDatabaseWriter(): ProviderRequestLogWriter | null {
   if (!process.env.DATABASE_URL) return null;
@@ -159,6 +176,111 @@ function createDatabaseWriter(): ProviderRequestLogWriter | null {
   };
 }
 
+export async function observeProviderOperation<TResult>(
+  context: ObservedProviderOperationContext<TResult>,
+  execute: () => Promise<TResult>,
+  suppliedWriter?: ProviderRequestLogWriter | null,
+) {
+  let writer =
+    suppliedWriter === undefined ? createDatabaseWriter() : suppliedWriter;
+  const startedAt = Date.now();
+  appLogger.info("provider.request.started", {
+    provider: context.provider,
+    model: context.model,
+    operation: context.operation,
+    sourcePath: context.sourcePath,
+    idempotencyKey: context.idempotencyKey,
+    estimatedCostUsd: context.estimatedCostUsd,
+  });
+
+  let logId: string | null = null;
+  if (writer) {
+    try {
+      logId = await writer.start({
+        generationJobId: context.generationJobId,
+        sourcePath: context.sourcePath,
+        idempotencyKey: context.idempotencyKey,
+        provider: context.provider,
+        model: context.model,
+        operation: context.operation,
+        requestBody: sanitizeProviderLogValue(context.requestBody),
+        providerRequestBody: sanitizeProviderLogValue(context.providerRequest),
+        estimatedCostUsd: context.estimatedCostUsd,
+      });
+    } catch (loggingError) {
+      writer = null;
+      appLogger.warn("provider.database_log.start_failed", {
+        provider: context.provider,
+        operation: context.operation,
+        error: loggingError,
+      });
+    }
+  }
+  try {
+    const result = await execute();
+    const completedAt = new Date();
+    const durationMs = Date.now() - startedAt;
+    const providerRequestIds = context.providerRequestIds?.(result) ?? [];
+    const actualCostUsd = context.actualCostUsd?.(result) ?? null;
+    if (writer && logId) {
+      try {
+        await writer.succeed(logId, {
+          responseBody: sanitizeProviderLogValue(
+            context.summarizeResult?.(result) ?? result,
+          ),
+          providerRequestIds,
+          actualCostUsd,
+          durationMs,
+          completedAt,
+        });
+      } catch (loggingError) {
+        appLogger.warn("provider.database_log.completion_failed", {
+          logId,
+          operation: context.operation,
+          error: loggingError,
+        });
+      }
+    }
+    appLogger.info("provider.request.completed", {
+      provider: context.provider,
+      model: context.model,
+      operation: context.operation,
+      idempotencyKey: context.idempotencyKey,
+      durationMs,
+      providerRequestIds,
+      actualCostUsd,
+    });
+    return result;
+  } catch (error) {
+    const completedAt = new Date();
+    const durationMs = Date.now() - startedAt;
+    if (writer && logId) {
+      try {
+        await writer.fail(logId, {
+          errorDetails: redactErrorDetails(error),
+          durationMs,
+          completedAt,
+        });
+      } catch (loggingError) {
+        appLogger.warn("provider.database_log.failure_update_failed", {
+          logId,
+          operation: context.operation,
+          error: loggingError,
+        });
+      }
+    }
+    appLogger.error("provider.request.failed", {
+      provider: context.provider,
+      model: context.model,
+      operation: context.operation,
+      idempotencyKey: context.idempotencyKey,
+      durationMs,
+      error,
+    });
+    throw error;
+  }
+}
+
 export type ObservedGenerationContext = {
   generationJobId: string | null;
   sourcePath: string;
@@ -199,39 +321,55 @@ export async function observeProviderGeneration(
   ) => Promise<GeneratedImage[]>,
   suppliedWriter?: ProviderRequestLogWriter | null,
 ) {
-  const writer =
+  let writer =
     suppliedWriter === undefined ? createDatabaseWriter() : suppliedWriter;
-  if (!writer) return execute(context.onProviderRequestAccepted);
-
-  // Starting the audit record before the external request gives paid calls a
-  // durable correlation ID. If this fails, the provider is not called.
-  const logId = await writer.start({
-    generationJobId: context.generationJobId,
-    sourcePath: context.sourcePath,
-    idempotencyKey: context.idempotencyKey,
+  const startedAt = Date.now();
+  appLogger.info("provider.request.started", {
     provider: context.provider,
     model: context.model,
     operation: "image_generation",
-    requestBody: sanitizeProviderLogValue(context.requestBody),
-    providerRequestBody: sanitizeProviderLogValue(context.providerRequest),
+    sourcePath: context.sourcePath,
+    idempotencyKey: context.idempotencyKey,
     estimatedCostUsd: context.estimatedCostUsd,
   });
-  const startedAt = Date.now();
+  let logId: string | null = null;
+  if (writer) {
+    try {
+      logId = await writer.start({
+        generationJobId: context.generationJobId,
+        sourcePath: context.sourcePath,
+        idempotencyKey: context.idempotencyKey,
+        provider: context.provider,
+        model: context.model,
+        operation: "image_generation",
+        requestBody: sanitizeProviderLogValue(context.requestBody),
+        providerRequestBody: sanitizeProviderLogValue(context.providerRequest),
+        estimatedCostUsd: context.estimatedCostUsd,
+      });
+    } catch (loggingError) {
+      writer = null;
+      appLogger.warn("provider.database_log.start_failed", {
+        provider: context.provider,
+        operation: "image_generation",
+        error: loggingError,
+      });
+    }
+  }
   const acceptedRequestIds: string[] = [];
   try {
     const images = await execute(async (providerRequestId, candidateIndex) => {
       acceptedRequestIds[candidateIndex] = providerRequestId;
       const ids = acceptedRequestIds.filter(Boolean);
-      try {
-        await writer.accepted?.(logId, ids);
-      } catch (loggingError) {
-        console.error("Provider accepted-ID log update failed", {
-          logId,
-          error:
-            loggingError instanceof Error
-              ? loggingError.message
-              : "Unknown logging error",
-        });
+      if (writer && logId) {
+        try {
+          await writer.accepted?.(logId, ids);
+        } catch (loggingError) {
+          appLogger.warn("provider.database_log.accepted_id_failed", {
+            logId,
+            operation: "image_generation",
+            error: loggingError,
+          });
+        }
       }
       try {
         await context.onProviderRequestAccepted?.(
@@ -239,16 +377,14 @@ export async function observeProviderGeneration(
           candidateIndex,
         );
       } catch (persistenceError) {
-        console.error("Provider accepted-ID job update failed", {
+        appLogger.error("provider.job.accepted_id_update_failed", {
           generationJobId: context.generationJobId,
-          error:
-            persistenceError instanceof Error
-              ? persistenceError.message
-              : "Unknown persistence error",
+          error: persistenceError,
         });
       }
     });
     const completedAt = new Date();
+    const durationMs = Date.now() - startedAt;
     const actualCostUsd = images.every(
       (image) => image.actualCostUsd !== undefined,
     )
@@ -257,43 +393,64 @@ export async function observeProviderGeneration(
           0,
         )
       : null;
-    try {
-      await writer.succeed(logId, {
-        responseBody: summarizeResponse(images),
-        providerRequestIds: [
-          ...new Set(images.map((image) => image.providerRequestId)),
-        ],
-        actualCostUsd,
-        durationMs: Date.now() - startedAt,
-        completedAt,
-      });
-    } catch (loggingError) {
-      console.error("Provider request log completion failed", {
-        logId,
-        error:
-          loggingError instanceof Error
-            ? loggingError.message
-            : "Unknown logging error",
-      });
+    const providerRequestIds = [
+      ...new Set(images.map((image) => image.providerRequestId)),
+    ];
+    if (writer && logId) {
+      try {
+        await writer.succeed(logId, {
+          responseBody: summarizeResponse(images),
+          providerRequestIds,
+          actualCostUsd,
+          durationMs,
+          completedAt,
+        });
+      } catch (loggingError) {
+        appLogger.warn("provider.database_log.completion_failed", {
+          logId,
+          operation: "image_generation",
+          error: loggingError,
+        });
+      }
     }
+    appLogger.info("provider.request.completed", {
+      provider: context.provider,
+      model: context.model,
+      operation: "image_generation",
+      idempotencyKey: context.idempotencyKey,
+      durationMs,
+      providerRequestIds,
+      actualCostUsd,
+      imageCount: images.length,
+    });
     return images;
   } catch (error) {
     const completedAt = new Date();
-    try {
-      await writer.fail(logId, {
-        errorDetails: redactErrorDetails(error),
-        durationMs: Date.now() - startedAt,
-        completedAt,
-      });
-    } catch (loggingError) {
-      console.error("Provider request log failure update failed", {
-        logId,
-        error:
-          loggingError instanceof Error
-            ? loggingError.message
-            : "Unknown logging error",
-      });
+    const durationMs = Date.now() - startedAt;
+    if (writer && logId) {
+      try {
+        await writer.fail(logId, {
+          errorDetails: redactErrorDetails(error),
+          durationMs,
+          completedAt,
+        });
+      } catch (loggingError) {
+        appLogger.warn("provider.database_log.failure_update_failed", {
+          logId,
+          operation: "image_generation",
+          error: loggingError,
+        });
+      }
     }
+    appLogger.error("provider.request.failed", {
+      provider: context.provider,
+      model: context.model,
+      operation: "image_generation",
+      idempotencyKey: context.idempotencyKey,
+      durationMs,
+      providerRequestIds: acceptedRequestIds.filter(Boolean),
+      error,
+    });
     throw error;
   }
 }
@@ -312,76 +469,35 @@ export async function observeProviderLogoRemoval(
   execute: () => Promise<SnapGenLogoRemovalResult>,
   suppliedWriter?: ProviderRequestLogWriter | null,
 ) {
-  const writer =
-    suppliedWriter === undefined ? createDatabaseWriter() : suppliedWriter;
-  if (!writer) return execute();
-
-  const logId = await writer.start({
-    generationJobId: context.generationJobId,
-    sourcePath: context.sourcePath,
-    idempotencyKey: context.idempotencyKey,
-    provider: "snapgen",
-    model: context.model,
-    operation: "logo_removal",
-    requestBody: sanitizeProviderLogValue({
-      historyUuid: context.historyUuid,
-      mode: "fast",
-    }),
-    providerRequestBody: sanitizeProviderLogValue(context.providerRequest),
-    estimatedCostUsd: 0,
-  });
-  const startedAt = Date.now();
-  try {
-    const result = await execute();
-    const completedAt = new Date();
-    try {
-      await writer.succeed(logId, {
-        responseBody: {
-          mimeType: result.mimeType,
-          byteLength: result.buffer.byteLength,
-          historyUuid: result.historyUuid,
-          removalJobId: result.removalJobId,
-          mode: result.mode,
-          estimatedCredits: result.estimatedCredits,
-          usedCredits: result.usedCredits,
-          binaryData: "[NOT STORED]",
-        },
-        providerRequestIds: [
-          ...new Set([result.historyUuid, result.removalJobId]),
-        ],
-        actualCostUsd: result.mode === "fast" ? 0 : null,
-        durationMs: Date.now() - startedAt,
-        completedAt,
-      });
-    } catch (loggingError) {
-      console.error("Provider logo-removal log completion failed", {
-        logId,
-        error:
-          loggingError instanceof Error
-            ? loggingError.message
-            : "Unknown logging error",
-      });
-    }
-    return result;
-  } catch (error) {
-    const completedAt = new Date();
-    try {
-      await writer.fail(logId, {
-        errorDetails: redactErrorDetails(error),
-        durationMs: Date.now() - startedAt,
-        completedAt,
-      });
-    } catch (loggingError) {
-      console.error("Provider logo-removal log failure update failed", {
-        logId,
-        error:
-          loggingError instanceof Error
-            ? loggingError.message
-            : "Unknown logging error",
-      });
-    }
-    throw error;
-  }
+  return observeProviderOperation(
+    {
+      generationJobId: context.generationJobId,
+      sourcePath: context.sourcePath,
+      idempotencyKey: context.idempotencyKey,
+      provider: "snapgen",
+      model: context.model,
+      operation: "logo_removal",
+      estimatedCostUsd: 0,
+      requestBody: { historyUuid: context.historyUuid, mode: "fast" },
+      providerRequest: context.providerRequest,
+      summarizeResult: (result) => ({
+        mimeType: result.mimeType,
+        byteLength: result.buffer.byteLength,
+        historyUuid: result.historyUuid,
+        removalJobId: result.removalJobId,
+        mode: result.mode,
+        estimatedCredits: result.estimatedCredits,
+        usedCredits: result.usedCredits,
+        binaryData: "[NOT STORED]",
+      }),
+      providerRequestIds: (result) => [
+        ...new Set([result.historyUuid, result.removalJobId]),
+      ],
+      actualCostUsd: (result) => (result.mode === "fast" ? 0 : null),
+    },
+    execute,
+    suppliedWriter,
+  );
 }
 
 export type ObservedHistoryLookupContext = {
@@ -398,77 +514,37 @@ export async function observeProviderHistoryLookup(
   execute: () => Promise<SnapgenHistoryCheckResult>,
   suppliedWriter?: ProviderRequestLogWriter | null,
 ) {
-  const writer =
-    suppliedWriter === undefined ? createDatabaseWriter() : suppliedWriter;
-  if (!writer) return execute();
-
-  const logId = await writer.start({
-    generationJobId: context.generationJobId,
-    sourcePath: context.sourcePath,
-    idempotencyKey: context.idempotencyKey,
-    provider: "snapgen",
-    model: context.model,
-    operation: "history_lookup",
-    requestBody: sanitizeProviderLogValue({
-      providerRequestId: context.providerRequestId,
-    }),
-    providerRequestBody: sanitizeProviderLogValue(context.providerRequest),
-    estimatedCostUsd: 0,
-  });
-  const startedAt = Date.now();
-  try {
-    const result = await execute();
-    const completedAt = new Date();
-    try {
-      await writer.succeed(logId, {
-        responseBody: sanitizeProviderLogValue({
-          providerRequestId: result.providerRequestId,
-          status: result.status,
-          errorDetails: result.errorDetails ?? null,
-          image: result.image
-            ? {
-                mimeType: result.image.mimeType,
-                byteLength: result.image.buffer.byteLength,
-                providerReportedWidth: result.image.providerReportedWidth,
-                providerReportedHeight: result.image.providerReportedHeight,
-                binaryData: "[NOT STORED]",
-              }
-            : null,
-        }),
-        providerRequestIds: [result.providerRequestId],
-        actualCostUsd: 0,
-        durationMs: Date.now() - startedAt,
-        completedAt,
-      });
-    } catch (loggingError) {
-      console.error("Provider history log completion failed", {
-        logId,
-        error:
-          loggingError instanceof Error
-            ? loggingError.message
-            : "Unknown logging error",
-      });
-    }
-    return result;
-  } catch (error) {
-    const completedAt = new Date();
-    try {
-      await writer.fail(logId, {
-        errorDetails: redactErrorDetails(error),
-        durationMs: Date.now() - startedAt,
-        completedAt,
-      });
-    } catch (loggingError) {
-      console.error("Provider history log failure update failed", {
-        logId,
-        error:
-          loggingError instanceof Error
-            ? loggingError.message
-            : "Unknown logging error",
-      });
-    }
-    throw error;
-  }
+  return observeProviderOperation(
+    {
+      generationJobId: context.generationJobId,
+      sourcePath: context.sourcePath,
+      idempotencyKey: context.idempotencyKey,
+      provider: "snapgen",
+      model: context.model,
+      operation: "history_lookup",
+      estimatedCostUsd: 0,
+      requestBody: { providerRequestId: context.providerRequestId },
+      providerRequest: context.providerRequest,
+      summarizeResult: (result) => ({
+        providerRequestId: result.providerRequestId,
+        status: result.status,
+        errorDetails: result.errorDetails ?? null,
+        image: result.image
+          ? {
+              mimeType: result.image.mimeType,
+              byteLength: result.image.buffer.byteLength,
+              providerReportedWidth: result.image.providerReportedWidth,
+              providerReportedHeight: result.image.providerReportedHeight,
+              binaryData: "[NOT STORED]",
+            }
+          : null,
+      }),
+      providerRequestIds: (result) => [result.providerRequestId],
+      actualCostUsd: () => 0,
+    },
+    execute,
+    suppliedWriter,
+  );
 }
 
 export async function observeProviderHistorySearch(
@@ -479,67 +555,30 @@ export async function observeProviderHistorySearch(
   execute: () => Promise<SnapgenHistoryMatch[]>,
   suppliedWriter?: ProviderRequestLogWriter | null,
 ) {
-  const writer =
-    suppliedWriter === undefined ? createDatabaseWriter() : suppliedWriter;
-  if (!writer) return execute();
-
-  const logId = await writer.start({
-    generationJobId: context.generationJobId,
-    sourcePath: context.sourcePath,
-    idempotencyKey: context.idempotencyKey,
-    provider: "snapgen",
-    model: context.model,
-    operation: "history_search",
-    requestBody: sanitizeProviderLogValue({
+  return observeProviderOperation(
+    {
+      generationJobId: context.generationJobId,
+      sourcePath: context.sourcePath,
+      idempotencyKey: context.idempotencyKey,
+      provider: "snapgen",
       model: context.model,
-      prompt: context.prompt,
-      createdAt: context.createdAt,
-    }),
-    providerRequestBody: sanitizeProviderLogValue(context.providerRequest),
-    estimatedCostUsd: 0,
-  });
-  const startedAt = Date.now();
-  try {
-    const matches = await execute();
-    const completedAt = new Date();
-    try {
-      await writer.succeed(logId, {
-        responseBody: sanitizeProviderLogValue({
-          matchCount: matches.length,
-          matches,
-        }),
-        providerRequestIds: matches.map((match) => match.providerRequestId),
-        actualCostUsd: 0,
-        durationMs: Date.now() - startedAt,
-        completedAt,
-      });
-    } catch (loggingError) {
-      console.error("Provider history-search log completion failed", {
-        logId,
-        error:
-          loggingError instanceof Error
-            ? loggingError.message
-            : "Unknown logging error",
-      });
-    }
-    return matches;
-  } catch (error) {
-    const completedAt = new Date();
-    try {
-      await writer.fail(logId, {
-        errorDetails: redactErrorDetails(error),
-        durationMs: Date.now() - startedAt,
-        completedAt,
-      });
-    } catch (loggingError) {
-      console.error("Provider history-search log failure update failed", {
-        logId,
-        error:
-          loggingError instanceof Error
-            ? loggingError.message
-            : "Unknown logging error",
-      });
-    }
-    throw error;
-  }
+      operation: "history_search",
+      estimatedCostUsd: 0,
+      requestBody: {
+        model: context.model,
+        prompt: context.prompt,
+        createdAt: context.createdAt,
+      },
+      providerRequest: context.providerRequest,
+      summarizeResult: (matches) => ({
+        matchCount: matches.length,
+        matches,
+      }),
+      providerRequestIds: (matches) =>
+        matches.map((match) => match.providerRequestId),
+      actualCostUsd: () => 0,
+    },
+    execute,
+    suppliedWriter,
+  );
 }

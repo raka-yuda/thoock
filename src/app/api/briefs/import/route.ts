@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { commercialBriefs, opportunities } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import {
   generateBriefCsvTemplate,
   parseBriefCsv,
@@ -18,7 +19,7 @@ const requestSchema = z.object({
   commit: z.boolean().default(false),
 });
 
-export async function GET() {
+async function get() {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   return new NextResponse(generateBriefCsvTemplate(), {
@@ -30,7 +31,7 @@ export async function GET() {
   });
 }
 
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const body = requestSchema.safeParse(await request.json().catch(() => null));
@@ -147,6 +148,9 @@ export async function POST(request: NextRequest) {
     { status: 201 },
   );
 }
+
+export const GET = withApiLogging(get);
+export const POST = withApiLogging(post);
 
 function previewPayload(
   rows: ReturnType<typeof parseBriefCsv>["rows"],

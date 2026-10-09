@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { enforceMonthlyBudget } from "@/lib/domain/cost";
 import { decideUpscale } from "@/lib/domain/image";
 import { MockImageGenerationProvider } from "@/modules/providers/generation";
@@ -16,7 +17,7 @@ const schema = z.object({
   candidates: z.number().int().min(1).max(6),
   idempotencyKey: z.string().min(8).max(100),
 });
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = schema.safeParse(await request.json().catch(() => null));
@@ -74,3 +75,5 @@ export async function POST(request: NextRequest) {
     { status: 201 },
   );
 }
+
+export const POST = withApiLogging(post);

@@ -42,11 +42,13 @@ export type ResearchedTopic = {
   portfolioPerformance: number;
   rationale: string;
   buyerUseCases: string[];
+  researchSources?: string[];
 };
 
 export interface TopicResearchProvider {
   readonly id: string;
   readonly label: string;
+  readonly model: string;
   isConfigured(): boolean;
   research(input: TopicResearchRequest): Promise<ResearchedTopic[]>;
 }
@@ -78,6 +80,7 @@ export type CommercialPromptResult = {
 export interface PromptGenerationProvider {
   readonly id: string;
   readonly label: string;
+  readonly model: string;
   isConfigured(): boolean;
   generate(input: CommercialPromptBrief): Promise<CommercialPromptResult>;
 }
@@ -108,6 +111,7 @@ export type GeneratedCommercialBrief = CommercialPromptBrief & {
 export interface BriefGenerationProvider {
   readonly id: string;
   readonly label: string;
+  readonly model: string;
   isConfigured(): boolean;
   generate(input: BriefGenerationRequest): Promise<GeneratedCommercialBrief[]>;
 }
@@ -212,6 +216,8 @@ export interface ImageUpscaleProvider {
 export interface MetadataGenerationProvider {
   readonly id: string;
   readonly label: string;
+  readonly model: string;
+  isConfigured(): boolean;
   generate(input: {
     briefName: string;
     prompt: string;

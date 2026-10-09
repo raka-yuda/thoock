@@ -1,5 +1,6 @@
 import "server-only";
 import { GoogleGenAI } from "@google/genai";
+import { z } from "zod";
 import {
   ADOBE_STOCK_CATEGORIES,
   normalizeAdobeCategory,
@@ -10,10 +11,35 @@ import {
   type AssetMetadata,
 } from "@/lib/domain/metadata";
 import type { MetadataGenerationProvider } from "./contracts";
+import {
+  openAITextModel,
+  requestOpenAIStructuredOutput,
+} from "./openai-text";
+
+const openAIMetadataJsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title", "category", "keywords", "fictionalPeopleProperty"],
+  properties: {
+    title: { type: "string", minLength: 5, maxLength: 70 },
+    category: { type: "string", minLength: 1, maxLength: 80 },
+    keywords: {
+      type: "array",
+      minItems: 5,
+      maxItems: 50,
+      items: { type: "string", minLength: 1, maxLength: 80 },
+    },
+    fictionalPeopleProperty: { type: "boolean" },
+  },
+} as const;
 
 export class BriefMetadataProvider implements MetadataGenerationProvider {
   readonly id = "brief-metadata";
   readonly label = "Brief metadata plan";
+  readonly model = "saved-brief-plan";
+  isConfigured() {
+    return true;
+  }
 
   async generate(input: {
     briefName: string;
@@ -51,6 +77,10 @@ export class BriefMetadataProvider implements MetadataGenerationProvider {
 export class DeterministicMetadataProvider implements MetadataGenerationProvider {
   readonly id = "mock-metadata";
   readonly label = "Deterministic mock metadata";
+  readonly model = "deterministic-metadata-v1";
+  isConfigured() {
+    return true;
+  }
   async generate(input: {
     briefName: string;
     prompt: string;
@@ -85,6 +115,12 @@ export class DeterministicMetadataProvider implements MetadataGenerationProvider
 export class GeminiMetadataProvider implements MetadataGenerationProvider {
   readonly id = "gemini-metadata";
   readonly label = "Gemini metadata";
+  get model() {
+    return process.env.GEMINI_TEXT_MODEL ?? "gemini-2.5-flash";
+  }
+  isConfigured() {
+    return Boolean(process.env.GEMINI_API_KEY);
+  }
   async generate(input: {
     briefName: string;
     prompt: string;
@@ -94,7 +130,7 @@ export class GeminiMetadataProvider implements MetadataGenerationProvider {
     if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
-      model: process.env.GEMINI_TEXT_MODEL ?? "gemini-2.5-flash",
+      model: this.model,
       contents: `Return JSON metadata for an Adobe Stock image. Title max 70 characters, no model or artist names. Return 10 to 35 ordered, commercially meaningful English keyword strings using nouns, adjectives, relevant action words, visual concepts, buyer uses, and locations. Exclude articles, conjunctions, prepositions, pronouns, and generic filler words. Category must be the numeric string for exactly one option: ${ADOBE_STOCK_CATEGORIES.map((item) => `${item.code}=${item.label}`).join(", ")}. Brief: ${input.briefName}. Visual prompt: ${input.prompt}`,
       config: { responseMimeType: "application/json" },
     });
@@ -112,6 +148,52 @@ export class GeminiMetadataProvider implements MetadataGenerationProvider {
       keywords: normalizeKeywords(value.keywords ?? input.prompt),
       generativeAi: true,
       fictionalPeopleProperty: value.fictionalPeopleProperty ?? false,
+      internalNotes:
+        "AI-generated metadata. Human editing and validation are required.",
+    };
+  }
+}
+
+export class OpenAIMetadataProvider implements MetadataGenerationProvider {
+  readonly id = "openai-metadata";
+  readonly label = "OpenAI metadata";
+  get model() {
+    return openAITextModel();
+  }
+  isConfigured() {
+    return Boolean(process.env.OPENAI_API_KEY);
+  }
+  async generate(input: {
+    briefName: string;
+    prompt: string;
+    filenameHint: string;
+  }): Promise<AssetMetadata> {
+    const response = await requestOpenAIStructuredOutput({
+      model: this.model,
+      schemaName: "adobe_stock_metadata",
+      schema: openAIMetadataJsonSchema,
+      instructions:
+        "Create editable Adobe Stock metadata for a generated image. Do not put generative-AI wording, model names, artist names, famous people, fictional characters, franchises, or unsupported real-event implications in the title or keywords.",
+      prompt: `Create metadata for brief ${JSON.stringify(input.briefName)} and visible-image prompt ${JSON.stringify(input.prompt)}. The title must be accurate and at most 70 characters. Return 10 to 35 relevance-ordered English keyword concepts using useful nouns, adjectives, action words, visual concepts, buyer uses, and locations; exclude articles, conjunctions, prepositions, pronouns, and generic filler. Category must be the numeric code for exactly one option: ${ADOBE_STOCK_CATEGORIES.map((item) => `${item.code}=${item.label}`).join(", ")}.`,
+      maxOutputTokens: 2_500,
+      parse: (value) =>
+        z
+          .object({
+            title: z.string().min(5).max(70),
+            category: z.union([z.string(), z.number()]),
+            keywords: z.array(z.string()).min(5).max(50),
+            fictionalPeopleProperty: z.boolean(),
+          })
+          .parse(value),
+    });
+    return {
+      filename: normalizeFilename(input.filenameHint),
+      title: response.data.title,
+      category: normalizeAdobeCategory(response.data.category) ?? "3",
+      language: "en",
+      keywords: normalizeKeywords(response.data.keywords),
+      generativeAi: true,
+      fictionalPeopleProperty: response.data.fictionalPeopleProperty,
       internalNotes:
         "AI-generated metadata. Human editing and validation are required.",
     };

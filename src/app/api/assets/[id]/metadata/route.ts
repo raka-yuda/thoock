@@ -9,6 +9,7 @@ import {
   generationJobs,
 } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import {
   assetMetadataSchema,
   validateAdobeMetadata,
@@ -17,11 +18,18 @@ import {
   BriefMetadataProvider,
   DeterministicMetadataProvider,
   GeminiMetadataProvider,
+  OpenAIMetadataProvider,
 } from "@/modules/providers/metadata";
+import { observeProviderOperation } from "@/modules/providers/request-observability";
 
 const generateSchema = z.object({
   provider: z
-    .enum(["brief-metadata", "mock-metadata", "gemini-metadata"])
+    .enum([
+      "brief-metadata",
+      "mock-metadata",
+      "gemini-metadata",
+      "openai-metadata",
+    ])
     .default("brief-metadata"),
 });
 
@@ -47,7 +55,7 @@ async function loadAsset(id: string) {
   return record;
 }
 
-export async function POST(
+async function post(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -63,13 +71,20 @@ export async function POST(
   if (!asset)
     return NextResponse.json({ error: "Asset not found." }, { status: 404 });
   const provider =
-    parsed.data.provider === "gemini-metadata"
+    parsed.data.provider === "openai-metadata"
+      ? new OpenAIMetadataProvider()
+      : parsed.data.provider === "gemini-metadata"
       ? new GeminiMetadataProvider()
       : parsed.data.provider === "mock-metadata"
         ? new DeterministicMetadataProvider()
         : new BriefMetadataProvider();
   try {
-    const metadata = await provider.generate({
+    if (!provider.isConfigured())
+      return NextResponse.json(
+        { error: `${provider.label} is not configured on the server.` },
+        { status: 409 },
+      );
+    const providerInput = {
       briefName: asset.briefName,
       prompt: asset.prompt,
       filenameHint: `${asset.assetId.slice(0, 6)}-${asset.briefName}`,
@@ -81,7 +96,27 @@ export async function POST(
         fictionalPeopleProperty: asset.metadataFictionalPeopleProperty,
         notes: asset.metadataNotes,
       },
-    });
+    };
+    const metadata = await observeProviderOperation(
+      {
+        generationJobId: null,
+        sourcePath: request.nextUrl.pathname,
+        idempotencyKey: `metadata-generation:${crypto.randomUUID()}`,
+        provider: provider.id,
+        model: provider.model,
+        operation: "metadata_generation",
+        estimatedCostUsd: null,
+        requestBody: { provider: parsed.data.provider, assetId: asset.assetId },
+        providerRequest: providerInput,
+        summarizeResult: (generated) => ({
+          filename: generated.filename,
+          title: generated.title,
+          category: generated.category,
+          keywordCount: generated.keywords.length,
+        }),
+      },
+      () => provider.generate(providerInput),
+    );
     const validation = validateAdobeMetadata(metadata);
     const [saved] = await getDb()
       .insert(assetMetadata)
@@ -116,7 +151,7 @@ export async function POST(
   }
 }
 
-export async function PATCH(
+async function patch(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -149,3 +184,6 @@ export async function PATCH(
     return NextResponse.json({ error: "Generate metadata first." }, { status: 404 });
   return NextResponse.json({ data: updated });
 }
+
+export const POST = withApiLogging(post);
+export const PATCH = withApiLogging(patch);
