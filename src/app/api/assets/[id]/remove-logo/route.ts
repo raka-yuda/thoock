@@ -3,12 +3,13 @@ import { NextResponse } from "next/server";
 import { getDb } from "@/db";
 import { generatedAssets, generationJobs } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { removeSnapgenLogo } from "@/modules/assets/remove-snapgen-logo";
 import { isSnapgenNanoModel } from "@/modules/providers/snapgen-logo-removal";
 
 export const runtime = "nodejs";
 
-export async function POST(
+async function post(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -86,3 +87,5 @@ export async function POST(
     );
   }
 }
+
+export const POST = withApiLogging(post);

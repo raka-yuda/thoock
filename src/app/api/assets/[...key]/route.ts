@@ -1,7 +1,10 @@
-import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
-import sharp from "sharp";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
+import {
+  getOrCreateImageVariant,
+  imageVariantEtag,
+} from "@/modules/assets/image-variant-cache";
 import { LocalStorageProvider } from "@/modules/providers/storage";
 
 export const runtime = "nodejs";
@@ -16,7 +19,7 @@ function contentTypeFor(key: string) {
   return "image/jpeg";
 }
 
-export async function GET(
+async function get(
   request: NextRequest,
   context: { params: Promise<{ key: string[] }> },
 ) {
@@ -37,10 +40,7 @@ export async function GET(
         { status: 400 },
       );
 
-    const cacheIdentity = `${storageKey}:${width ?? "original"}:v1`;
-    const cacheHash = createHash("sha256")
-      .update(cacheIdentity)
-      .digest("hex");
+    const cacheHash = imageVariantEtag(storageKey, width);
     const etag = `"${cacheHash}"`;
     const responseHeaders = {
       "cache-control": "private, max-age=604800, immutable",
@@ -53,23 +53,7 @@ export async function GET(
     let data: Buffer;
     let contentType = contentTypeFor(storageKey);
     if (width) {
-      const thumbnailKey = `cache/thumbnails/${cacheHash}.jpg`;
-      if (await storage.exists(thumbnailKey)) {
-        data = await storage.get(thumbnailKey);
-      } else {
-        const original = await storage.get(storageKey);
-        data = await sharp(original)
-          .rotate()
-          .resize({
-            width,
-            fit: "inside",
-            withoutEnlargement: true,
-            kernel: sharp.kernel.lanczos3,
-          })
-          .jpeg({ quality: width <= 640 ? 72 : 82, mozjpeg: true })
-          .toBuffer();
-        await storage.put(thumbnailKey, data, "image/jpeg");
-      }
+      data = await getOrCreateImageVariant({ storage, storageKey, width });
       contentType = "image/jpeg";
     } else {
       data = await storage.get(storageKey);
@@ -85,3 +69,5 @@ export async function GET(
     return NextResponse.json({ error: "Asset not found" }, { status: 404 });
   }
 }
+
+export const GET = withApiLogging(get);

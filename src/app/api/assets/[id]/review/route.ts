@@ -4,6 +4,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { assetReviews, generatedAssets, qualityChecks } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { BASE_REVIEW_CHECKS } from "@/lib/domain/review";
 
 const schema = z.object({
@@ -12,7 +13,7 @@ const schema = z.object({
   checks: z.record(z.string(), z.boolean()).default({}),
 });
 
-export async function POST(
+async function post(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -62,3 +63,5 @@ export async function POST(
   });
   return NextResponse.json({ data: result }, { status: 201 });
 }
+
+export const POST = withApiLogging(post);

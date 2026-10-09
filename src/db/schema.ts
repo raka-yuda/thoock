@@ -181,7 +181,7 @@ export const commercialBriefs = pgTable(
     visualStyle: text("visual_style").notNull(),
     orientation: varchar("orientation", { length: 24 }).notNull(),
     composition: text("composition").notNull(),
-    copySpaceLocation: varchar("copy_space_location", { length: 40 }).notNull(),
+    copySpaceLocation: varchar("copy_space_location", { length: 100 }).notNull(),
     lighting: text("lighting").notNull(),
     mood: text("mood").notNull(),
     representationNotes: text("representation_notes").notNull().default(""),
@@ -403,6 +403,10 @@ export const generatedAssets = pgTable(
     generationJobId: uuid("generation_job_id")
       .notNull()
       .references(() => generationJobs.id, { onDelete: "cascade" }),
+    activeDerivedAssetId: uuid("active_derived_asset_id").references(
+      (): AnyPgColumn => derivedAssets.id,
+      { onDelete: "set null" },
+    ),
     storageKey: text("storage_key").notNull(),
     originalFilename: varchar("original_filename", { length: 255 }).notNull(),
     providerRequestId: varchar("provider_request_id", { length: 200 }),
@@ -427,6 +431,9 @@ export const generatedAssets = pgTable(
   },
   (table) => [
     index("generated_assets_job_idx").on(table.generationJobId),
+    index("generated_assets_active_derived_idx").on(
+      table.activeDerivedAssetId,
+    ),
     index("generated_assets_created_idx").on(table.createdAt, table.id),
     index("generated_assets_phash_idx").on(table.perceptualHash),
     index("generated_assets_upscale_idx").on(table.upscaleStatus),

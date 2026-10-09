@@ -5,6 +5,7 @@ import { z } from "zod";
 import { getDb } from "@/db";
 import { commercialBriefs, generatedAssets, generationJobs } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { dateOnlySchema, resolveDateRange } from "@/lib/domain/date-range";
 import { enforceMonthlyBudget } from "@/lib/domain/cost";
 import { classifyGenerationFailure } from "@/lib/domain/generation-failure";
@@ -21,6 +22,7 @@ import { loadConfiguredModelCatalog } from "@/modules/providers/model-catalog.se
 import { observeProviderGeneration } from "@/modules/providers/request-observability";
 import { isSnapgenNanoModel } from "@/modules/providers/snapgen-logo-removal";
 import { LocalStorageProvider } from "@/modules/providers/storage";
+import { warmReviewThumbnail } from "@/modules/assets/image-variant-cache";
 
 export const runtime = "nodejs";
 
@@ -66,7 +68,7 @@ const historyQuerySchema = z.object({
 
 const completedRequests = new Map<string, unknown>();
 
-export async function GET(request: NextRequest) {
+async function get(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = historyQuerySchema.safeParse(
@@ -245,7 +247,7 @@ export async function GET(request: NextRequest) {
   });
 }
 
-export async function POST(request: NextRequest) {
+async function post(request: NextRequest) {
   if (!(await readSession()))
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   const parsed = requestSchema.safeParse(
@@ -491,6 +493,12 @@ export async function POST(request: NextRequest) {
           inspection.format === "jpeg" ? "jpg" : inspection.format;
         const storageKey = `generated/${jobId}/candidate-${index + 1}.${extension}`;
         await storage.put(storageKey, image.buffer, image.mimeType);
+        if (!removeNanoLogo)
+          await warmReviewThumbnail({
+            storage,
+            storageKey,
+            source: image.buffer,
+          });
         return {
           id: String(randomUUID()),
           storageKey,
@@ -561,7 +569,7 @@ export async function POST(request: NextRequest) {
       if (removeNanoLogo) {
         for (const asset of assets) {
           try {
-            await removeSnapgenLogo({
+            const cleaned = await removeSnapgenLogo({
               assetId: asset.id,
               generationJobId: persistedJobId,
               model: capability.providerModelId,
@@ -569,6 +577,16 @@ export async function POST(request: NextRequest) {
               idempotencyKey: `${persistedJobId}:logo:${asset.id}`,
               sourcePath: "/api/generation",
             });
+            asset.storageKey = cleaned.storageKey;
+            asset.actualInspectedDimensions = {
+              width: cleaned.width,
+              height: cleaned.height,
+            };
+            asset.actualMegapixels = Number(cleaned.megapixels);
+            asset.format = "jpeg";
+            asset.fileSize = cleaned.fileSize;
+            asset.checksum = cleaned.checksum;
+            asset.perceptualHash = cleaned.perceptualHash;
             asset.logoRemoval.status = "completed";
           } catch (logoRemovalError) {
             asset.logoRemoval.status = "failed";
@@ -646,3 +664,6 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
+export const GET = withApiLogging(get);
+export const POST = withApiLogging(post);

@@ -9,6 +9,7 @@ import {
   generationJobs,
 } from "@/db/schema";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { classifyGenerationFailure } from "@/lib/domain/generation-failure";
 import { decideUpscale } from "@/lib/domain/image";
 import { removeSnapgenLogo } from "@/modules/assets/remove-snapgen-logo";
@@ -21,6 +22,7 @@ import {
 import { createHistoryLookupLogKey } from "@/modules/providers/request-log-key";
 import { isSnapgenNanoModel } from "@/modules/providers/snapgen-logo-removal";
 import { LocalStorageProvider } from "@/modules/providers/storage";
+import { warmReviewThumbnail } from "@/modules/assets/image-variant-cache";
 
 export const runtime = "nodejs";
 
@@ -28,7 +30,7 @@ const requestSchema = z.object({
   providerRequestId: z.string().trim().min(8).max(200).optional(),
 });
 
-export async function POST(
+async function post(
   request: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -200,8 +202,14 @@ export async function POST(
       const extension = inspection.format === "jpeg" ? "jpg" : inspection.format;
       const assetId = randomUUID();
       const storageKey = `generated/${job.id}/recovered-${index + 1}-${assetId.slice(0, 8)}.${extension}`;
-      await storage.put(storageKey, result.image.buffer, result.image.mimeType);
       const removeNanoLogo = isSnapgenNanoModel(job.model);
+      await storage.put(storageKey, result.image.buffer, result.image.mimeType);
+      if (!removeNanoLogo)
+        await warmReviewThumbnail({
+          storage,
+          storageKey,
+          source: result.image.buffer,
+        });
       const [asset] = await db
         .insert(generatedAssets)
         .values({
@@ -305,3 +313,5 @@ export async function POST(
     { status: status === "running" ? 202 : 200 },
   );
 }
+
+export const POST = withApiLogging(post);

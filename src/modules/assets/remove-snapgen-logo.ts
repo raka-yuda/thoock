@@ -1,12 +1,18 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { derivedAssets, generatedAssets } from "@/db/schema";
-import { inspectImage } from "./inspect";
+import {
+  assetMetadata,
+  derivedAssets,
+  generatedAssets,
+} from "@/db/schema";
+import { prepareCanonicalJpeg } from "./canonical-image";
 import { observeProviderLogoRemoval } from "@/modules/providers/request-observability";
 import { SnapGenLogoRemovalProvider } from "@/modules/providers/snapgen-logo-removal";
 import { LocalStorageProvider } from "@/modules/providers/storage";
+import { warmReviewThumbnail } from "./image-variant-cache";
 
 export type RemoveSnapgenLogoInput = {
   assetId: string;
@@ -19,17 +25,39 @@ export type RemoveSnapgenLogoInput = {
 
 export async function removeSnapgenLogo(input: RemoveSnapgenLogoInput) {
   const db = getDb();
-  const existing = await db.query.derivedAssets.findFirst({
-    where: and(
-      eq(derivedAssets.sourceAssetId, input.assetId),
-      eq(derivedAssets.type, "logo_removed"),
-    ),
-    orderBy: [desc(derivedAssets.createdAt)],
+  const asset = await db.query.generatedAssets.findFirst({
+    where: eq(generatedAssets.id, input.assetId),
+    columns: { id: true, activeDerivedAssetId: true },
   });
+  if (!asset) throw new Error("The generated image no longer exists.");
+
+  const activeDerived = asset.activeDerivedAssetId
+    ? await db.query.derivedAssets.findFirst({
+        where: and(
+          eq(derivedAssets.id, asset.activeDerivedAssetId),
+          eq(derivedAssets.sourceAssetId, input.assetId),
+          eq(derivedAssets.type, "logo_removed"),
+        ),
+      })
+    : null;
+  const existing =
+    activeDerived ??
+    (await db.query.derivedAssets.findFirst({
+      where: and(
+        eq(derivedAssets.sourceAssetId, input.assetId),
+        eq(derivedAssets.type, "logo_removed"),
+      ),
+      orderBy: [desc(derivedAssets.createdAt)],
+    }));
   if (existing) {
+    await warmReviewThumbnail({
+      storage: new LocalStorageProvider(),
+      storageKey: existing.storageKey,
+    });
     await db
       .update(generatedAssets)
       .set({
+        activeDerivedAssetId: existing.id,
         logoRemovalStatus: "completed",
         logoRemovalError: null,
         updatedAt: new Date(),
@@ -60,40 +88,51 @@ export async function removeSnapgenLogo(input: RemoveSnapgenLogoInput) {
       },
       () => provider.remove(input.historyUuid, "fast"),
     );
-    const inspection = await inspectImage(cleaned.buffer);
-    const extension = inspection.format === "jpeg" ? "jpg" : inspection.format;
-    const storageKey = `derived/${input.assetId}/logo-removed.${extension}`;
-    await new LocalStorageProvider().put(
+    const canonical = await prepareCanonicalJpeg(cleaned.buffer);
+    const inspection = canonical.prepared;
+    const version = randomUUID().slice(0, 12);
+    const storageKey = `derived/${input.assetId}/logo-removed-${version}.jpg`;
+    const storage = new LocalStorageProvider();
+    await storage.put(storageKey, canonical.buffer, canonical.mimeType);
+    await warmReviewThumbnail({
+      storage,
       storageKey,
-      cleaned.buffer,
-      cleaned.mimeType,
-    );
-    const [derived] = await db
-      .insert(derivedAssets)
-      .values({
-        sourceAssetId: input.assetId,
-        type: "logo_removed",
-        provider: "snapgen",
-        method: cleaned.mode,
-        storageKey,
-        width: inspection.width,
-        height: inspection.height,
-        megapixels: String(inspection.megapixels),
-        mimeType: cleaned.mimeType,
-        fileSize: inspection.fileSize,
-        checksum: inspection.checksum,
-        perceptualHash: inspection.perceptualHash,
-        mayReinterpretDetail: false,
-      })
-      .returning();
-    await db
-      .update(generatedAssets)
-      .set({
-        logoRemovalStatus: "completed",
-        logoRemovalError: null,
-        updatedAt: new Date(),
-      })
-      .where(eq(generatedAssets.id, input.assetId));
+      source: canonical.buffer,
+    });
+    const derived = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(derivedAssets)
+        .values({
+          sourceAssetId: input.assetId,
+          type: "logo_removed",
+          provider: "snapgen",
+          method: cleaned.mode,
+          storageKey,
+          width: inspection.width,
+          height: inspection.height,
+          megapixels: String(inspection.megapixels),
+          mimeType: canonical.mimeType,
+          fileSize: inspection.fileSize,
+          checksum: inspection.checksum,
+          perceptualHash: inspection.perceptualHash,
+          mayReinterpretDetail: false,
+        })
+        .returning();
+      await tx
+        .update(generatedAssets)
+        .set({
+          activeDerivedAssetId: created.id,
+          logoRemovalStatus: "completed",
+          logoRemovalError: null,
+          updatedAt: new Date(),
+        })
+        .where(eq(generatedAssets.id, input.assetId));
+      await tx
+        .update(assetMetadata)
+        .set({ preparedAssetId: null, updatedAt: new Date() })
+        .where(eq(assetMetadata.generatedAssetId, input.assetId));
+      return created;
+    });
     return derived;
   } catch (error) {
     const message =

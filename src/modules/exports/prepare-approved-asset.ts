@@ -73,20 +73,31 @@ export async function prepareApprovedAssetForExport(
     throw new Error(`${metadata.filename} has invalid Adobe metadata.`);
 
   const storage = new LocalStorageProvider();
-  const logoRemovedSource = await db.query.derivedAssets.findFirst({
-    where: and(
-      eq(derivedAssets.sourceAssetId, asset.id),
-      eq(derivedAssets.type, "logo_removed"),
-    ),
-    orderBy: [desc(derivedAssets.createdAt)],
-  });
+  const activeDerivedSource = asset.activeDerivedAssetId
+    ? await db.query.derivedAssets.findFirst({
+        where: and(
+          eq(derivedAssets.id, asset.activeDerivedAssetId),
+          eq(derivedAssets.sourceAssetId, asset.id),
+        ),
+      })
+    : null;
+  const legacyLogoRemovedSource = activeDerivedSource
+    ? null
+    : await db.query.derivedAssets.findFirst({
+        where: and(
+          eq(derivedAssets.sourceAssetId, asset.id),
+          eq(derivedAssets.type, "logo_removed"),
+        ),
+        orderBy: [desc(derivedAssets.createdAt)],
+      });
+  const canonicalSource = activeDerivedSource ?? legacyLogoRemovedSource;
   const sourceJob = await db.query.generationJobs.findFirst({
     where: eq(generationJobs.id, asset.generationJobId),
   });
   if (
     sourceJob?.provider === "snapgen" &&
     isSnapgenNanoModel(sourceJob.model) &&
-    !logoRemovedSource
+    canonicalSource?.type !== "logo_removed"
   )
     throw new Error(
       `${asset.originalFilename} still contains the SnapGen provider mark. Complete Fast logo removal before export.`,
@@ -99,7 +110,7 @@ export async function prepareApprovedAssetForExport(
       existing?.sourceAssetId === asset.id &&
       existing.type === "prepared_jpeg" &&
       (existing.sourceDerivedAssetId ?? null) ===
-        (logoRemovedSource?.id ?? null)
+        (canonicalSource?.id ?? null)
     ) {
       const jpeg = await storage.get(existing.storageKey);
       const inspection = await inspectImage(jpeg);
@@ -128,7 +139,7 @@ export async function prepareApprovedAssetForExport(
   }
 
   const source = await storage.get(
-    logoRemovedSource?.storageKey ?? asset.storageKey,
+    canonicalSource?.storageKey ?? asset.storageKey,
   );
   const prepared = await prepareAdobeJpeg(
     source,
@@ -141,7 +152,7 @@ export async function prepareApprovedAssetForExport(
     .insert(derivedAssets)
     .values({
       sourceAssetId: asset.id,
-      sourceDerivedAssetId: logoRemovedSource?.id,
+      sourceDerivedAssetId: canonicalSource?.id,
       type: "prepared_jpeg",
       provider: "sharp",
       method: "orientation-srgb-jpeg",

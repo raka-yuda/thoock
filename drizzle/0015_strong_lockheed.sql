@@ -1,0 +1,1 @@
+ALTER TABLE "commercial_briefs" ALTER COLUMN "copy_space_location" SET DATA TYPE varchar(100);

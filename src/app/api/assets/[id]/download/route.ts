@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { readSession } from "@/lib/auth";
+import { withApiLogging } from "@/lib/server/logger";
 import { prepareApprovedAssetForExport } from "@/modules/exports/prepare-approved-asset";
 
 export const runtime = "nodejs";
 
-export async function POST(
+async function post(
   _request: Request,
   context: { params: Promise<{ id: string }> },
 ) {
@@ -38,3 +39,5 @@ export async function POST(
     );
   }
 }
+
+export const POST = withApiLogging(post);
