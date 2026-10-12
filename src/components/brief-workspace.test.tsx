@@ -342,7 +342,17 @@ describe("BriefWorkspace", () => {
   it("generates one image for each selected brief after confirmation", async () => {
     render(<BriefWorkspace />);
     await screen.findByText("Calm remote-work reset");
-    fireEvent.click(screen.getByLabelText(/select calm remote-work reset/i));
+    fireEvent.click(
+      screen.getByRole("checkbox", {
+        name: "Select all briefs on this page",
+      }),
+    );
+    expect(
+      screen.getByRole("region", { name: "Bulk selection actions" }),
+    ).toHaveTextContent("1 brief selected");
+    expect(
+      screen.getByLabelText(/select calm remote-work reset/i),
+    ).toBeChecked();
     fireEvent.click(screen.getByRole("button", { name: /generate selected \(1\)/i }));
     fireEvent.click(screen.getByRole("button", { name: /confirm 1 generation/i }));
     await waitFor(() =>

@@ -36,6 +36,7 @@ import {
 import { InfoTooltip } from "./info-help";
 import { Metric } from "./metric";
 import { PageHeader } from "./page-header";
+import { TableBulkActionBar } from "./table-bulk-action-bar";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -645,24 +646,19 @@ export function ExportWorkspace() {
                     </TableBody>
                   </Table>
                 )}
-                {selected.length > 0 && (
-                  <div className="sticky bottom-0 flex items-center gap-4 border-t bg-card/95 px-4 py-3 backdrop-blur">
-                    <b className="text-sm">{selected.length} images selected</b>
-                    <span className="text-xs text-muted-foreground">
-                      Only compliant files will be packaged.
-                    </span>
-                    <Button
-                      variant="outline"
-                      className="ml-auto"
-                      onClick={() => setSelected([])}
-                    >
-                      Clear
-                    </Button>
-                    <Button onClick={createExport} disabled={exporting}>
-                      {exporting ? "Preparing…" : "Create package"}
-                    </Button>
-                  </div>
-                )}
+                <TableBulkActionBar
+                  count={selected.length}
+                  itemLabel="image"
+                  description="Only compliant files will be packaged."
+                  onClear={() => setSelected([])}
+                >
+                  <Button
+                    onClick={createExport}
+                    disabled={exporting}
+                  >
+                    {exporting ? "Preparing…" : "Create package"}
+                  </Button>
+                </TableBulkActionBar>
                 <DataPagination
                   page={resolvedPage}
                   totalPages={readyTotalPages}

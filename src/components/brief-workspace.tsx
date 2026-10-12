@@ -50,6 +50,7 @@ import {
 } from "@/lib/client/url-filters";
 import { PageHeader } from "./page-header";
 import { Metric as WorkspaceMetric } from "./metric";
+import { TableBulkActionBar } from "./table-bulk-action-bar";
 import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -299,6 +300,24 @@ export function BriefWorkspace({
   const bulkCost = bulkCapability
     ? estimateGenerationCost(bulkCapability, bulkTargets.length)
     : null;
+  const selectedBriefsOnPage = briefs.filter((brief) =>
+    selectedBriefIds.includes(brief.id),
+  ).length;
+  const pageSelectionState =
+    selectedBriefsOnPage === briefs.length && briefs.length > 0
+      ? true
+      : selectedBriefsOnPage > 0
+        ? "indeterminate"
+        : false;
+
+  function toggleBriefPage(checked: boolean) {
+    const pageIds = new Set(briefs.map((brief) => brief.id));
+    setSelectedBriefIds((current) =>
+      checked
+        ? Array.from(new Set([...current, ...pageIds]))
+        : current.filter((id) => !pageIds.has(id)),
+    );
+  }
 
   function chooseBulkModel(value: string) {
     setBulkCapabilityId(value);
@@ -988,55 +1007,6 @@ export function BriefWorkspace({
           filters={activeFilters}
           onClear={clearFilters}
         />
-        {briefs.length > 0 && (
-          <div className="flex flex-wrap items-center gap-3 border-b bg-card px-4 py-2.5">
-          <Checkbox
-            id="select-visible-briefs"
-            checked={briefs.every((brief) =>
-              selectedBriefIds.includes(brief.id),
-            )}
-            onCheckedChange={(value) =>
-              setSelectedBriefIds(
-                value === true
-                  ? Array.from(
-                      new Set([
-                        ...selectedBriefIds,
-                        ...briefs.map((brief) => brief.id),
-                      ]),
-                    )
-                  : selectedBriefIds.filter(
-                      (id) => !briefs.some((brief) => brief.id === id),
-                    ),
-              )
-            }
-          />
-          <Label htmlFor="select-visible-briefs" className="cursor-pointer">
-            {selectedBriefIds.length
-              ? `${selectedBriefIds.length} briefs selected`
-              : "Select all briefs on this page"}
-          </Label>
-          {selectedBriefIds.length > 0 && (
-            <>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setSelectedBriefIds([])}
-              >
-                Clear selection
-              </Button>
-              <Button
-                aria-label={`Generate selected (${selectedBriefIds.length})`}
-                className="ml-auto"
-                size="sm"
-                onClick={() => setBulkGenerateOpen(true)}
-              >
-                <Play />
-                Generate selected
-              </Button>
-            </>
-          )}
-          </div>
-        )}
         <FilterDialog
         open={filterOpen}
         onOpenChange={setFilterOpen}
@@ -1188,7 +1158,15 @@ export function BriefWorkspace({
           <Table className="workspace-table">
             <TableHeader>
               <TableRow>
-                <TableHead className="w-12" />
+                <TableHead className="w-12">
+                  <Checkbox
+                    aria-label="Select all briefs on this page"
+                    checked={pageSelectionState}
+                    onCheckedChange={(value) =>
+                      toggleBriefPage(value === true)
+                    }
+                  />
+                </TableHead>
                 <TableHead>
                   <button
                     type="button"
@@ -1305,6 +1283,20 @@ export function BriefWorkspace({
           </Table>
         </div>
       )}
+        <TableBulkActionBar
+          count={selectedBriefIds.length}
+          itemLabel="brief"
+          description="One generation job will be created for each selected brief."
+          onClear={() => setSelectedBriefIds([])}
+        >
+          <Button
+            aria-label={`Generate selected (${selectedBriefIds.length})`}
+            onClick={() => setBulkGenerateOpen(true)}
+          >
+            <Play />
+            Generate selected
+          </Button>
+        </TableBulkActionBar>
         {!loading && briefs.length > 0 && (
           <DataPagination
             page={pagination.page}
