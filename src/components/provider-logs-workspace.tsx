@@ -578,9 +578,6 @@ export function ProviderLogsWorkspace({ jobId }: { jobId?: string }) {
               setFilterOpen(true);
             }}
           />
-          <p className="self-center whitespace-nowrap text-xs text-muted-foreground">
-            {pagination.total} requests
-          </p>
         </div>
         <ActiveFilterChips
           className="border-b bg-muted/10 px-3 py-2.5"
