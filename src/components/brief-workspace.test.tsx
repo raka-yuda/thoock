@@ -263,11 +263,12 @@ describe("BriefWorkspace", () => {
 
     render(<BriefWorkspace />);
 
-    expect(
-      await screen.findByRole("dialog", {
-        name: "Create a batch of commercial briefs",
-      }),
-    ).toHaveTextContent("Remote work wellness");
+    const dialog = await screen.findByRole("dialog", {
+      name: "Create a batch of commercial briefs",
+    });
+    await waitFor(() =>
+      expect(dialog).toHaveTextContent("Remote work wellness"),
+    );
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() =>
       expect(
