@@ -27,6 +27,36 @@ function makeAsset(index: number) {
   };
 }
 
+const exportBatches = [
+  {
+    id: "batch-editorial",
+    name: "Editorial October batch",
+    status: "succeeded",
+    itemCount: 12,
+    csvBytes: 4096,
+    createdAt: "2026-10-12T08:00:00.000Z",
+    updatedAt: "2026-10-12T08:00:00.000Z",
+  },
+  {
+    id: "batch-failed",
+    name: "Failed travel batch",
+    status: "failed",
+    itemCount: 4,
+    csvBytes: null,
+    createdAt: "2026-10-10T08:00:00.000Z",
+    updatedAt: "2026-10-10T08:00:00.000Z",
+  },
+  {
+    id: "batch-queued",
+    name: "Queued September batch",
+    status: "queued",
+    itemCount: 8,
+    csvBytes: null,
+    createdAt: "2026-09-30T08:00:00.000Z",
+    updatedAt: "2026-09-30T08:00:00.000Z",
+  },
+];
+
 describe("ExportWorkspace", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -56,7 +86,9 @@ describe("ExportWorkspace", () => {
         }
         if (pathname === "/api/exports") {
           return new Response(
-            JSON.stringify({ data: { assets: {}, batches: [] } }),
+            JSON.stringify({
+              data: { assets: {}, batches: exportBatches },
+            }),
           );
         }
         return new Response(JSON.stringify({ error: "Not found" }), {
@@ -126,5 +158,40 @@ describe("ExportWorkspace", () => {
     expect(anchorClick).toHaveBeenCalled();
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:prepared-image");
     expect(await screen.findByText("JPEG downloaded")).toBeVisible();
+  });
+
+  it("searches and filters export batch history", async () => {
+    window.history.replaceState({}, "", "/exports?tab=history");
+    render(<ExportWorkspace />);
+
+    const search = await screen.findByPlaceholderText(
+      "Search export batches…",
+    );
+
+    fireEvent.change(search, { target: { value: "editorial" } });
+    expect(await screen.findByText("Editorial October batch")).toBeVisible();
+    expect(screen.queryByText("Failed travel batch")).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: "" } });
+    fireEvent.click(screen.getByRole("button", { name: "Filter options" }));
+    fireEvent.click(screen.getByRole("button", { name: "Failed" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply filters" }));
+
+    expect(await screen.findByText("Failed travel batch")).toBeVisible();
+    expect(screen.queryByText("Editorial October batch")).not.toBeInTheDocument();
+    expect(screen.getByText("Status: Failed")).toBeVisible();
+  });
+
+  it("restores export batch date filters from the URL", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/exports?tab=history&batch-from=2026-10-11",
+    );
+    render(<ExportWorkspace />);
+
+    expect(await screen.findByText("Editorial October batch")).toBeVisible();
+    expect(screen.queryByText("Failed travel batch")).not.toBeInTheDocument();
+    expect(screen.getByText("From 2026-10-11")).toBeVisible();
   });
 });

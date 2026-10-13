@@ -95,6 +95,15 @@ type ExportBatch = {
   updatedAt: string;
 };
 const emptyFilters = { exportState: "all", from: "", to: "" };
+const emptyBatchFilters = { status: "all", from: "", to: "" };
+const batchStatusOptions = [
+  ["all", "Any status"],
+  ["queued", "Queued"],
+  ["running", "Running"],
+  ["succeeded", "Succeeded"],
+  ["failed", "Failed"],
+  ["cancelled", "Cancelled"],
+] as const;
 
 export function ExportWorkspace() {
   const [assets, setAssets] = useState<Asset[]>([]);
@@ -117,8 +126,17 @@ export function ExportWorkspace() {
   const [sort, setSort] = useState("newest");
   const [filterOpen, setFilterOpen] = useState(false);
   const [draftFilters, setDraftFilters] = useState(emptyFilters);
+  const [workspaceTab, setWorkspaceTab] = useState("prepare");
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
+  const [batchQuery, setBatchQuery] = useState("");
+  const [batchStatus, setBatchStatus] = useState("all");
+  const [batchDateFrom, setBatchDateFrom] = useState("");
+  const [batchDateTo, setBatchDateTo] = useState("");
+  const [batchFilterOpen, setBatchFilterOpen] = useState(false);
+  const [batchDraftFilters, setBatchDraftFilters] = useState(
+    emptyBatchFilters,
+  );
   const [batchPage, setBatchPage] = useState(1);
   const [batchPageSize] = useState(10);
 
@@ -171,9 +189,29 @@ export function ExportWorkspace() {
       };
       setQuery(readUrlFilter("q"));
       setPage(Math.max(1, Number(readUrlFilter("page", "1")) || 1));
-      setBatchPage(
-        Math.max(1, Number(readUrlFilter("batchPage", "1")) || 1),
+      setWorkspaceTab(
+        readUrlFilter("tab", "prepare") === "history"
+          ? "history"
+          : "prepare",
       );
+      setBatchQuery(readUrlFilter("batch-query"));
+      setBatchPage(
+        Math.max(1, Number(readUrlFilter("batch-page", "1")) || 1),
+      );
+      const requestedBatchStatus = readUrlFilter("batch-status", "all");
+      const nextBatchFilters = {
+        status: batchStatusOptions.some(
+          ([value]) => value === requestedBatchStatus,
+        )
+          ? requestedBatchStatus
+          : "all",
+        from: readUrlFilter("batch-from"),
+        to: readUrlFilter("batch-to"),
+      };
+      setBatchStatus(nextBatchFilters.status);
+      setBatchDateFrom(nextBatchFilters.from);
+      setBatchDateTo(nextBatchFilters.to);
+      setBatchDraftFilters(nextBatchFilters);
       setSort(readUrlFilter("sort", "newest"));
       setExportState(next.exportState);
       setDateFrom(next.from);
@@ -245,9 +283,22 @@ export function ExportWorkspace() {
     (resolvedPage - 1) * pageSize,
     resolvedPage * pageSize,
   );
-  const batchTotalPages = Math.ceil(batches.length / batchPageSize);
+  const filteredBatches = useMemo(() => {
+    const normalizedQuery = batchQuery.trim().toLowerCase();
+    return batches.filter((batch) => {
+      const createdDate = batch.createdAt.slice(0, 10);
+      return (
+        (!normalizedQuery ||
+          batch.name.toLowerCase().includes(normalizedQuery)) &&
+        (batchStatus === "all" || batch.status === batchStatus) &&
+        (!batchDateFrom || createdDate >= batchDateFrom) &&
+        (!batchDateTo || createdDate <= batchDateTo)
+      );
+    });
+  }, [batchDateFrom, batchDateTo, batchQuery, batchStatus, batches]);
+  const batchTotalPages = Math.ceil(filteredBatches.length / batchPageSize);
   const resolvedBatchPage = Math.min(batchPage, Math.max(batchTotalPages, 1));
-  const pagedBatches = batches.slice(
+  const pagedBatches = filteredBatches.slice(
     (resolvedBatchPage - 1) * batchPageSize,
     resolvedBatchPage * batchPageSize,
   );
@@ -274,6 +325,47 @@ export function ExportWorkspace() {
           key: "to",
           label: `Through ${dateTo}`,
           onRemove: () => applyFilters({ ...draftFilters, to: "" }),
+        }
+      : null,
+  ].filter((item): item is NonNullable<typeof item> => Boolean(item));
+  const batchActiveFilters = [
+    batchStatus !== "all"
+      ? {
+          key: "batch-status",
+          label: `Status: ${
+            batchStatusOptions.find(([value]) => value === batchStatus)?.[1] ??
+            batchStatus
+          }`,
+          onRemove: () =>
+            applyBatchFilters({
+              status: "all",
+              from: batchDateFrom,
+              to: batchDateTo,
+            }),
+        }
+      : null,
+    batchDateFrom
+      ? {
+          key: "batch-from",
+          label: `From ${batchDateFrom}`,
+          onRemove: () =>
+            applyBatchFilters({
+              status: batchStatus,
+              from: "",
+              to: batchDateTo,
+            }),
+        }
+      : null,
+    batchDateTo
+      ? {
+          key: "batch-to",
+          label: `Through ${batchDateTo}`,
+          onRemove: () =>
+            applyBatchFilters({
+              status: batchStatus,
+              from: batchDateFrom,
+              to: "",
+            }),
         }
       : null,
   ].filter((item): item is NonNullable<typeof item> => Boolean(item));
@@ -309,6 +401,23 @@ export function ExportWorkspace() {
   }
   function clearFilters() {
     applyFilters(emptyFilters);
+  }
+  function applyBatchFilters(next = batchDraftFilters) {
+    setBatchDraftFilters(next);
+    setBatchStatus(next.status);
+    setBatchDateFrom(next.from);
+    setBatchDateTo(next.to);
+    setBatchPage(1);
+    pushUrlFilters({
+      "batch-status": next.status,
+      "batch-from": next.from,
+      "batch-to": next.to,
+      "batch-page": 1,
+    });
+    setBatchFilterOpen(false);
+  }
+  function clearBatchFilters() {
+    applyBatchFilters(emptyBatchFilters);
   }
   async function createExport() {
     const exportedCount = selected.length;
@@ -429,7 +538,14 @@ export function ExportWorkspace() {
         title="Export workflow needs attention"
         variant="error"
       />
-      <Tabs id="export-tabs" defaultValue="prepare">
+      <Tabs
+        id="export-tabs"
+        value={workspaceTab}
+        onValueChange={(value) => {
+          setWorkspaceTab(value);
+          pushUrlFilters({ tab: value === "prepare" ? null : value });
+        }}
+      >
         <TabsList className="mb-3">
           <TabsTrigger value="prepare">Prepare package</TabsTrigger>
           <TabsTrigger value="history">Export batches</TabsTrigger>
@@ -707,6 +823,54 @@ export function ExportWorkspace() {
         <TabsContent value="history">
           <Card className="overflow-hidden">
             <CardContent className="p-0">
+              <div className="workspace-toolbar flex flex-col gap-3 border-b p-3 md:flex-row">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="pl-9"
+                    value={batchQuery}
+                    onChange={(event) => {
+                      setBatchQuery(event.target.value);
+                      setBatchPage(1);
+                    }}
+                    onBlur={() =>
+                      pushUrlFilters({
+                        "batch-query": batchQuery || null,
+                        "batch-page": 1,
+                      })
+                    }
+                    placeholder="Search export batches…"
+                  />
+                </div>
+                <DateRangeToolbar
+                  from={batchDateFrom}
+                  to={batchDateTo}
+                  ariaLabel="Filter export batches by created date"
+                  onApply={(from, to) => {
+                    applyBatchFilters({
+                      status: batchStatus,
+                      from,
+                      to,
+                    });
+                  }}
+                />
+                <FilterButton
+                  count={urlFilterCount([batchStatus])}
+                  onClick={() => {
+                    setBatchDraftFilters({
+                      status: batchStatus,
+                      from: batchDateFrom,
+                      to: batchDateTo,
+                    });
+                    setBatchFilterOpen(true);
+                  }}
+                />
+              </div>
+              <ActiveFilterChips
+                className="border-b bg-muted/10 px-3 py-2.5"
+                filters={batchActiveFilters}
+                onClear={clearBatchFilters}
+              />
               <Table className="workspace-table">
                 <TableHeader>
                   <TableRow>
@@ -747,13 +911,15 @@ export function ExportWorkspace() {
                       </TableCell>
                     </TableRow>
                   ))}
-                  {!batches.length && (
+                  {!pagedBatches.length && (
                     <TableRow>
                       <TableCell
                         colSpan={5}
                         className="py-12 text-center text-muted-foreground"
                       >
-                        No export packages created yet.
+                        {batches.length
+                          ? "No export batches match these filters."
+                          : "No export packages created yet."}
                       </TableCell>
                     </TableRow>
                   )}
@@ -762,13 +928,13 @@ export function ExportWorkspace() {
               <DataPagination
                 page={resolvedBatchPage}
                 totalPages={batchTotalPages}
-                totalItems={batches.length}
+                totalItems={filteredBatches.length}
                 pageSize={batchPageSize}
                 itemLabel="batches"
                 disabled={loading}
                 onPageChange={(value) => {
                   setBatchPage(value);
-                  pushUrlFilters({ batchPage: value });
+                  pushUrlFilters({ "batch-page": value });
                 }}
               />
             </CardContent>
@@ -824,6 +990,56 @@ export function ExportWorkspace() {
               ariaLabel="Exported through"
               onChange={(to) =>
                 setDraftFilters((current) => ({ ...current, to }))
+              }
+            />
+          </div>
+        </FilterSection>
+      </FilterDialog>
+      <FilterDialog
+        open={batchFilterOpen}
+        onOpenChange={setBatchFilterOpen}
+        title="Filter export batches"
+        onClear={() => setBatchDraftFilters(emptyBatchFilters)}
+        onApply={() => applyBatchFilters()}
+      >
+        <FilterSection label="Status">
+          <div className="flex flex-wrap gap-2">
+            {batchStatusOptions.map(([value, label]) => (
+              <FilterChoice
+                key={value}
+                active={batchDraftFilters.status === value}
+                onClick={() =>
+                  setBatchDraftFilters((current) => ({
+                    ...current,
+                    status: value,
+                  }))
+                }
+              >
+                {label}
+              </FilterChoice>
+            ))}
+          </div>
+        </FilterSection>
+        <FilterSection label="Created date">
+          <div className="grid grid-cols-2 gap-3">
+            <DateFilterPicker
+              id="batch-from"
+              label="From"
+              value={batchDraftFilters.from}
+              max={batchDraftFilters.to || undefined}
+              ariaLabel="Batch created from"
+              onChange={(from) =>
+                setBatchDraftFilters((current) => ({ ...current, from }))
+              }
+            />
+            <DateFilterPicker
+              id="batch-to"
+              label="To"
+              value={batchDraftFilters.to}
+              min={batchDraftFilters.from || undefined}
+              ariaLabel="Batch created through"
+              onChange={(to) =>
+                setBatchDraftFilters((current) => ({ ...current, to }))
               }
             />
           </div>
